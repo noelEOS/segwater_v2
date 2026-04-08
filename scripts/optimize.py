@@ -13,11 +13,15 @@ from src.engine.trainer import SpectralTrainer
 def objective(trial: optuna.Trial, cfg: DictConfig):
     # Suggest hyperparameters
     arch = trial.suggest_categorical("arch", ["unet", "upernet", "segformer"])
-    base_lr = trial.suggest_float("base_lr", 1e-5, 1e-2, log=True)
+    base_lr = trial.suggest_float("base_learning_rate", 1e-5, 1e-2, log=True)
+    weight_decay = trial.suggest_float("weight_decay", 1e-5, 1e-1, log=True)
+    label_smoothing = trial.suggest_float("label_smoothing", 0.0, 0.2)
     dice_weight = trial.suggest_float("dice_weight", 0.0, 1.0)
     
     cfg.model.arch = arch
     cfg.trainer.base_learning_rate = base_lr
+    cfg.trainer.weight_decay = weight_decay
+    cfg.model.label_smoothing = label_smoothing
     cfg.model.dice_weight = dice_weight
     cfg.model.ce_weight = 1.0 - dice_weight
     
@@ -35,8 +39,8 @@ def objective(trial: optuna.Trial, cfg: DictConfig):
     datamodule = CoastalDataModule(
         root_dir=cfg.data.memmap_root,
         H=cfg.data.H, W=cfg.data.W,
-        batch_size=cfg.data.batch_size,
-        val_batch_size=cfg.data.val_batch_size,
+        batch_size=256,
+        val_batch_size=256,
         num_workers=cfg.data.num_workers,
         augment=cfg.data.augment
     )
@@ -65,10 +69,24 @@ def objective(trial: optuna.Trial, cfg: DictConfig):
     train_dl = datamodule.train_dataloader()
     val_dl = datamodule.val_dataloader()
     
+    max_steps = cfg.trainer.max_steps
+    warmup_steps = cfg.trainer.warmup_steps
+    val_check_interval = cfg.trainer.val_check_interval
+    
+    scheduler_warmup = torch.optim.lr_scheduler.LinearLR(
+        optimizer, start_factor=1e-6, end_factor=1.0, total_iters=max(1, warmup_steps)
+    )
+    scheduler_decay = torch.optim.lr_scheduler.CosineAnnealingLR(
+        optimizer, T_max=max(1, max_steps - warmup_steps), eta_min=1e-6
+    )
+    scheduler = torch.optim.lr_scheduler.SequentialLR(
+        optimizer, schedulers=[scheduler_warmup, scheduler_decay], milestones=[max(1, warmup_steps)]
+    )
+    
     trainer = SpectralTrainer(
         model=model,
         optimizer=optimizer,
-        scheduler=None, # Simplifying scheduler for HPO
+        scheduler=scheduler,
         loss_fn=loss_fn,
         device=device,
         use_amp=cfg.trainer.mixed_precision,
@@ -76,22 +94,13 @@ def objective(trial: optuna.Trial, cfg: DictConfig):
         num_classes=cfg.model.num_classes
     )
     
-    best_iou = -1.0
-    for epoch in range(cfg.trainer.epochs):
-        _ = trainer.train_epoch(train_dl)
-        val_metrics = trainer.val_epoch(val_dl)
-        
-        miou = val_metrics["mIoU"]
-        if miou > best_iou:
-            best_iou = miou
-            
-        wandb.log({"epoch": epoch, "trial_mIoU": miou})
-        
-        trial.report(miou, step=epoch)
-        if trial.should_prune():
-            datamodule.teardown()
-            run.finish()
-            raise optuna.TrialPruned(f"Pruned at epoch {epoch}")
+    best_iou = trainer.fit(
+        train_dataloader=train_dl,
+        val_dataloader=val_dl,
+        max_steps=max_steps,
+        val_check_interval=val_check_interval,
+        trial=trial
+    )
             
     datamodule.teardown()
     run.finish()
@@ -102,7 +111,7 @@ def main(cfg: DictConfig):
     os.makedirs(cfg.output_dir, exist_ok=True)
     db_path = f"sqlite:///{cfg.output_dir}/optuna_sweep.db"
     
-    pruner = optuna.pruners.HyperbandPruner()
+    pruner = optuna.pruners.HyperbandPruner(min_resource=800)
     study = optuna.create_study(
         direction="maximize",
         pruner=pruner,
@@ -110,7 +119,7 @@ def main(cfg: DictConfig):
         study_name="coastal_water_hpo"
     )
     
-    study.optimize(lambda trial: objective(trial, cfg), n_trials=10)
+    study.optimize(lambda trial: objective(trial, cfg), n_trials=60)
     print("Optimization Complete. Best params:", study.best_params)
 
 if __name__ == "__main__":

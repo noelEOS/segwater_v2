@@ -54,8 +54,11 @@ def main(cfg: DictConfig):
     train_dl = datamodule.train_dataloader()
     val_dl = datamodule.val_dataloader()
     
-    total_steps = cfg.trainer.max_steps
-    warmup_steps = int(total_steps * cfg.trainer.warmup_ratio)
+    # Stage 2 Budgeting
+    steps_per_epoch = len(train_dl)
+    epochs = 10
+    total_steps = epochs * steps_per_epoch
+    warmup_steps = 1000
     
     scheduler_warmup = torch.optim.lr_scheduler.LinearLR(
         optimizer, start_factor=1e-6, end_factor=1.0, total_iters=max(1, warmup_steps)
@@ -79,30 +82,15 @@ def main(cfg: DictConfig):
         num_classes=cfg.model.num_classes
     )
     
-    best_iou = -1.0
     os.makedirs(cfg.output_dir, exist_ok=True)
     
-    epochs = cfg.trainer.epochs
-    for epoch in range(epochs):
-        train_metrics = trainer.train_epoch(train_dl)
-        val_metrics = trainer.val_epoch(val_dl)
-        
-        wandb.log({
-            "epoch": epoch,
-            **{f"train/{k}": v for k, v in train_metrics.items()},
-            **{f"val/{k}": v for k, v in val_metrics.items()}
-        })
-        
-        if val_metrics["mIoU"] > best_iou:
-            best_iou = val_metrics["mIoU"]
-            ckpt_path = os.path.join(cfg.output_dir, "best_model.pth")
-            torch.save({
-                "epoch": epoch,
-                "model_state_dict": trainer.model.state_dict(),
-                "optimizer_state_dict": trainer.optimizer.state_dict(),
-                "best_iou": best_iou
-            }, ckpt_path)
-            print(f"Epoch {epoch}: New best mIoU {best_iou:.4f} saved to {ckpt_path}")
+    trainer.fit(
+        train_dataloader=train_dl,
+        val_dataloader=val_dl,
+        max_steps=total_steps,
+        val_check_interval=max(1, steps_per_epoch),  # Check at the end of every epoch
+        save_dir=cfg.output_dir
+    )
             
     datamodule.teardown()
     wandb.finish()

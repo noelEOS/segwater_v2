@@ -1,0 +1,17 @@
+name: segwater
+channels:
+  - pytorch
+  - conda-forge
+  - defaults
+dependencies:
+  - python=3.10
+  - pip
+  - pip:
+      - torch
+      - torchvision
+      - segmentation-models-pytorch
+      - optuna
+      - wandb
+      - hydra-core
+      - torchmetrics
+      - numpy

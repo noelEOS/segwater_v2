@@ -1,0 +1,7 @@
+memmap_root: /home/jovyan/shared/noelivanulloa/globalpairs/OTHER_PROJECTS/Global_Sen12Coast/PRODUCTION_DATASET
+H: 224
+W: 224
+batch_size: 256
+val_batch_size: 256
+num_workers: 8
+augment: true

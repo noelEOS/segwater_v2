@@ -100,6 +100,13 @@ def objective(trial: optuna.Trial, cfg: DictConfig):
     logger.info("="*40)
     # --------------------------------------
     
+    if wandb.run is not None:
+        wandb.config.update({
+            "data_lineage/train_samples": len(train_dl.dataset),
+            "data_lineage/val_samples": len(val_dl.dataset),
+            "data_lineage/steps_per_epoch": len(train_dl)
+        })
+
     max_steps = cfg.trainer.max_steps
     warmup_steps = cfg.trainer.warmup_steps
     val_check_interval = cfg.trainer.val_check_interval

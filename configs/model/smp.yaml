@@ -1,5 +1,5 @@
 arch: unet
-encoder_name: tu-hrnet_w48_ssld
+encoder_name: resnet50
 dice_weight: 0.5
 ce_weight: 0.5
 label_smoothing: 0.05

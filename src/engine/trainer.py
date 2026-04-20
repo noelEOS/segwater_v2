@@ -2,6 +2,8 @@ import torch
 import torch.nn as nn
 from typing import Dict, Any
 
+from tqdm import tqdm
+
 from src.utils.metrics import SegmentationMetrics
 
 class SpectralTrainer:
@@ -57,40 +59,43 @@ class SpectralTrainer:
             total_loss = 0.0
             num_batches = 0
             
-            while num_batches < val_check_interval and global_step < max_steps:
-                try:
-                    batch = next(train_iterator)
-                except StopIteration:
-                    train_iterator = iter(train_dataloader)
-                    batch = next(train_iterator)
+            with tqdm(total=val_check_interval, desc=f"Train [Steps {global_step} - {global_step+val_check_interval}]", leave=False) as pbar:
+                while num_batches < val_check_interval and global_step < max_steps:
+                    try:
+                        batch = next(train_iterator)
+                    except StopIteration:
+                        train_iterator = iter(train_dataloader)
+                        batch = next(train_iterator)
+                        
+                    x = batch["pixel_values"].to(self.device, non_blocking=True)
+                    y = batch["labels"].to(self.device, non_blocking=True)
                     
-                x = batch["pixel_values"].to(self.device, non_blocking=True)
-                y = batch["labels"].to(self.device, non_blocking=True)
-                
-                self.optimizer.zero_grad(set_to_none=True)
-                
-                with torch.autocast(device_type=self.device.type, enabled=self.use_amp):
-                    logits = self.model(x)
-                    loss_dict = self.loss_fn(logits, y)
-                    loss = loss_dict["loss"]
+                    self.optimizer.zero_grad(set_to_none=True)
                     
-                self.scaler.scale(loss).backward()
-                
-                if self.gradient_clip_val > 0.0:
-                    self.scaler.unscale_(self.optimizer)
-                    torch.nn.utils.clip_grad_norm_(self.model.parameters(), self.gradient_clip_val)
+                    with torch.autocast(device_type=self.device.type, enabled=self.use_amp):
+                        logits = self.model(x)
+                        loss_dict = self.loss_fn(logits, y)
+                        loss = loss_dict["loss"]
+                        
+                    self.scaler.scale(loss).backward()
                     
-                self.scaler.step(self.optimizer)
-                self.scaler.update()
-                
-                if self.scheduler is not None:
-                    self.scheduler.step()
+                    if self.gradient_clip_val > 0.0:
+                        self.scaler.unscale_(self.optimizer)
+                        torch.nn.utils.clip_grad_norm_(self.model.parameters(), self.gradient_clip_val)
+                        
+                    self.scaler.step(self.optimizer)
+                    self.scaler.update()
                     
-                preds = torch.argmax(logits, dim=1)
-                self.train_metrics.update(preds, y)
-                total_loss += loss.item()
-                num_batches += 1
-                global_step += 1
+                    if self.scheduler is not None:
+                        self.scheduler.step()
+                        
+                    preds = torch.argmax(logits, dim=1)
+                    self.train_metrics.update(preds, y)
+                    total_loss += loss.item()
+                    num_batches += 1
+                    global_step += 1
+                    
+                    pbar.update(1)
                 
             train_metrics_dict = self.train_metrics.compute()
             train_loss = total_loss / max(1, num_batches)
@@ -133,7 +138,7 @@ class SpectralTrainer:
         total_loss = 0.0
         num_batches = 0
         
-        for batch in dataloader:
+        for batch in tqdm(dataloader, desc="Validating", leave=False):
             x = batch["pixel_values"].to(self.device, non_blocking=True)
             y = batch["labels"].to(self.device, non_blocking=True)
             
@@ -152,3 +157,45 @@ class SpectralTrainer:
         metrics_dict["loss"] = total_loss / max(1, num_batches)
         
         return metrics_dict
+        
+    @torch.no_grad()
+    def test(self, dataloader) -> Dict[str, Any]:
+        self.model.eval()
+        self.val_metrics.reset()
+        
+        total_loss = 0.0
+        num_batches = 0
+        
+        for batch in tqdm(dataloader, desc="Testing", leave=False):
+            x = batch["pixel_values"].to(self.device, non_blocking=True)
+            y = batch["labels"].to(self.device, non_blocking=True)
+            
+            with torch.autocast(device_type=self.device.type, enabled=self.use_amp):
+                logits = self.model(x)
+                loss_dict = self.loss_fn(logits, y)
+                loss = loss_dict["loss"]
+                
+            preds = torch.argmax(logits, dim=1)
+            self.val_metrics.update(preds, y)
+            
+            total_loss += loss.item()
+            num_batches += 1
+            
+        metrics_dict = self.val_metrics.compute()
+        metrics_dict["loss"] = total_loss / max(1, num_batches)
+        
+        return metrics_dict
+
+    @torch.no_grad()
+    def predict(self, dataloader):
+        self.model.eval()
+        for batch in tqdm(dataloader, desc="Predicting", leave=False):
+            x = batch["pixel_values"].to(self.device, non_blocking=True)
+            y = batch["labels"].to(self.device, non_blocking=True)
+            
+            with torch.autocast(device_type=self.device.type, enabled=self.use_amp):
+                logits = self.model(x)
+                
+            preds = torch.argmax(logits, dim=1)
+            
+            yield {"inputs": x.cpu(), "predictions": preds.cpu(), "labels": y.cpu()}

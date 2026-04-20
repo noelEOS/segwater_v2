@@ -60,8 +60,8 @@ def objective(trial: optuna.Trial, cfg: DictConfig):
     datamodule = CoastalDataModule(
         root_dir=cfg.data.memmap_root,
         H=cfg.data.H, W=cfg.data.W,
-        batch_size=256,
-        val_batch_size=256,
+        batch_size=cfg.data.get("batch_size", 256),
+        val_batch_size=cfg.data.get("val_batch_size", 256),
         num_workers=cfg.data.num_workers,
         augment=cfg.data.augment
     )

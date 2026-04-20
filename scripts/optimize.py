@@ -42,7 +42,7 @@ def objective(trial: optuna.Trial, cfg: DictConfig):
         config=OmegaConf.to_container(cfg, resolve=True)
     )
     
-    # --- LOGGING BLOCK ---
+    # --- HYPERPARAMETER LOGGING BLOCK ---
     logger.info("="*40)
     logger.info(f"STARTING TRIAL {trial.number}")
     logger.info("="*40)
@@ -89,6 +89,16 @@ def objective(trial: optuna.Trial, cfg: DictConfig):
     
     train_dl = datamodule.train_dataloader()
     val_dl = datamodule.val_dataloader()
+
+    # --- DATASET LOGGING BLOCK ---
+    logger.info("="*40)
+    logger.info("DATASET CONFIGURATION")
+    logger.info(f"Train Samples: {len(train_dl.dataset):,}")
+    logger.info(f"Val Samples:   {len(val_dl.dataset):,}")
+    logger.info(f"Batch Size:    {cfg.data.batch_size}")
+    logger.info(f"Train Steps:   {len(train_dl):,} per epoch")
+    logger.info("="*40)
+    # --------------------------------------
     
     max_steps = cfg.trainer.max_steps
     warmup_steps = cfg.trainer.warmup_steps
@@ -152,7 +162,7 @@ def main(cfg: DictConfig):
     
     # default to 60 if n_trials is not provided
     study.optimize(lambda trial: objective(trial, cfg), n_trials=cfg.get("n_trials", 60))
-    logger.info("Optimization Complete. Best params:", study.best_params)
+    logger.info(f"Optimization Complete. Best params: {study.best_params}")
 
 if __name__ == "__main__":
     main()

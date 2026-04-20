@@ -113,14 +113,11 @@ def main(cfg: DictConfig):
     
     pruner = optuna.pruners.HyperbandPruner(min_resource=800)
 
-    study_name = f"hpo_{cfg.model.arch}_{cfg.model.encoder_name}"
-    cfg.study_name = study_name
-    
     study = optuna.create_study(
         direction="maximize",
         pruner=pruner,
         storage=db_path,
-        study_name=study_name
+        study_name=cfg.study_name
     )
     
     # default to 60 if n_trials is not provided

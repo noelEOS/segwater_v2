@@ -11,3 +11,5 @@ project_name: coastal_water_seg
 seed: 42
 device: cuda
 output_dir: outputs/${now:%Y-%m-%d}/${now:%H-%M-%S}
+
+study_name: hpo_${model.arch}_${model.encoder_name}

@@ -1,7 +1,13 @@
+# Mac Related
+.DS_Store
+
 # Data
 data/raw/
 data/processed/
 notebooks/
+
+# My notes
+docs/my_notes/
 
 # Logs
 logs/

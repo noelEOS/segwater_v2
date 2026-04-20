@@ -88,7 +88,7 @@ def main(cfg: DictConfig):
         train_dataloader=train_dl,
         val_dataloader=val_dl,
         max_steps=total_steps,
-        val_check_interval=max(1, steps_per_epoch),  # Check at the end of every epoch
+        val_check_interval=max(1, val_check_interval=1200), # To-do: make this a parameter set via config
         save_dir=cfg.output_dir
     )
             

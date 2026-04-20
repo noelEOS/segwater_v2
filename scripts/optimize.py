@@ -94,6 +94,7 @@ def objective(trial: optuna.Trial, cfg: DictConfig):
         loss_fn=loss_fn,
         device=device,
         use_amp=cfg.trainer.mixed_precision,
+        precision=cfg.trainer.get("precision", "fp16"),
         gradient_clip_val=cfg.trainer.gradient_clip_val,
         num_classes=cfg.model.num_classes
     )

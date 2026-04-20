@@ -8,3 +8,4 @@ accumulate_grad_batches: 1
 target_global_batch: 256
 gradient_clip_val: 1.0
 mixed_precision: true
+precision: "bf16"

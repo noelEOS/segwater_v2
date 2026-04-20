@@ -5,6 +5,9 @@ from typing import Dict, Any
 from tqdm import tqdm
 
 from src.utils.metrics import SegmentationMetrics
+import logging
+
+logger = logging.getLogger(__name__)
 
 class SpectralTrainer:
     def __init__(
@@ -17,7 +20,8 @@ class SpectralTrainer:
         use_amp: bool = True,
         gradient_clip_val: float = 1.0,
         num_classes: int = 2,
-        ignore_index: int = 255
+        ignore_index: int = 255, 
+        precision: str = "fp16",
     ):
         self.model = model.to(device)
         self.optimizer = optimizer
@@ -27,10 +31,24 @@ class SpectralTrainer:
         self.use_amp = use_amp
         self.gradient_clip_val = gradient_clip_val
 
+        # Resolve the torch dtype
+        self.amp_dtype = torch.bfloat16 if precision == "bf16" else torch.float16
+
+        scaler_enabled = use_amp and precision == "fp16"
+
+        logger.info("="*40)
+        logger.info("TRAINER CONFIGURATION SETUP")
+        logger.info(f"Device:            {self.device}")
+        logger.info(f"Mixed Precision:   {self.use_amp}")
+        logger.info(f"AMP Dtype:         {self.amp_dtype}")
+        logger.info(f"Gradient Clipping: {self.gradient_clip_val}")
+        logger.info(f"Scaler Enabled:    {scaler_enabled}")
+        logger.info("="*40)
+
         if device.type == "cuda":
-            self.scaler = torch.amp.GradScaler("cuda", enabled=use_amp)
+            self.scaler = torch.amp.GradScaler("cuda", enabled=scaler_enabled)
         else:
-            self.scaler = torch.amp.GradScaler("cpu", enabled=use_amp)
+            self.scaler = torch.amp.GradScaler("cpu", enabled=scaler_enabled)
         
         self.train_metrics = SegmentationMetrics(num_classes=num_classes, ignore_index=ignore_index, device=device.type)
         self.val_metrics = SegmentationMetrics(num_classes=num_classes, ignore_index=ignore_index, device=device.type)
@@ -72,7 +90,7 @@ class SpectralTrainer:
                     
                     self.optimizer.zero_grad(set_to_none=True)
                     
-                    with torch.autocast(device_type=self.device.type, enabled=self.use_amp):
+                    with torch.autocast(device_type=self.device.type, enabled=self.use_amp, dtype=self.amp_dtype):
                         logits = self.model(x)
                         loss_dict = self.loss_fn(logits, y)
                         loss = loss_dict["loss"]

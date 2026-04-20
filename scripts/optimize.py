@@ -33,7 +33,16 @@ def objective(trial: optuna.Trial, cfg: DictConfig):
     cfg.model.ce_weight = 1.0 - dice_weight
     
 
-    # --- NEW LOGGING BLOCK ---
+    run = wandb.init(
+        project=cfg.project_name,
+        group=cfg.study_name,
+        job_type="trial",
+        name=f"trial_{trial.number}",
+        reinit=True,
+        config=OmegaConf.to_container(cfg, resolve=True)
+    )
+    
+    # --- LOGGING BLOCK ---
     logger.info("="*40)
     logger.info(f"STARTING TRIAL {trial.number}")
     logger.info("="*40)
@@ -46,15 +55,6 @@ def objective(trial: optuna.Trial, cfg: DictConfig):
     logger.info("="*40)
     # -------------------------
 
-    run = wandb.init(
-        project=cfg.project_name,
-        group=cfg.study_name,
-        job_type="trial",
-        name=f"trial_{trial.number}",
-        reinit=True,
-        config=OmegaConf.to_container(cfg, resolve=True)
-    )
-    
     device = torch.device(cfg.device if torch.cuda.is_available() else "cpu")
     
     datamodule = CoastalDataModule(

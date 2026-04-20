@@ -4,6 +4,9 @@ defaults:
   - trainer: default
   - _self_
 
+# Optuna Configuration
+n_trials: 60
+
 project_name: coastal_water_seg
 seed: 42
 device: cuda

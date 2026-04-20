@@ -119,7 +119,8 @@ def main(cfg: DictConfig):
         study_name="coastal_water_hpo"
     )
     
-    study.optimize(lambda trial: objective(trial, cfg), n_trials=60)
+    # default to 60 if n_trials is not provided
+    study.optimize(lambda trial: objective(trial, cfg), n_trials=cfg.get("n_trials", 60))
     print("Optimization Complete. Best params:", study.best_params)
 
 if __name__ == "__main__":

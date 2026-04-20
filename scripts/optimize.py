@@ -9,6 +9,10 @@ from src.data.datamodule import CoastalDataModule
 from src.models.factory import SegmentationModelFactory
 from src.models.losses import CoastalCompositeLoss
 from src.engine.trainer import SpectralTrainer
+from dotenv import load_dotenv 
+
+
+load_dotenv()
 
 def objective(trial: optuna.Trial, cfg: DictConfig):
     # Suggest hyperparameters
@@ -109,7 +113,14 @@ def objective(trial: optuna.Trial, cfg: DictConfig):
 @hydra.main(version_base="1.3", config_path="../configs", config_name="config")
 def main(cfg: DictConfig):
     os.makedirs(cfg.output_dir, exist_ok=True)
-    db_path = f"sqlite:///{cfg.output_dir}/optuna_sweep.db"
+
+
+    if cfg.optuna_storage:
+        db_path = cfg.optuna_storage
+        print(f"Connecting to remote Postgres database...")
+    else:
+        db_path = f"sqlite:///{cfg.output_dir}/optuna_sweep.db"
+        print(f"No remote DB found. Falling back to local SQLite: {db_path}")
     
     pruner = optuna.pruners.HyperbandPruner(min_resource=800)
 
@@ -117,7 +128,8 @@ def main(cfg: DictConfig):
         direction="maximize",
         pruner=pruner,
         storage=db_path,
-        study_name=cfg.study_name
+        study_name=cfg.study_name,
+        load_if_exists=True
     )
     
     # default to 60 if n_trials is not provided

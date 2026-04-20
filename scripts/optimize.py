@@ -27,7 +27,7 @@ def objective(trial: optuna.Trial, cfg: DictConfig):
     
     run = wandb.init(
         project=cfg.project_name,
-        group="optuna-sweep",
+        group=cfg.study_name,
         job_type="trial",
         name=f"trial_{trial.number}",
         reinit=True,
@@ -112,11 +112,15 @@ def main(cfg: DictConfig):
     db_path = f"sqlite:///{cfg.output_dir}/optuna_sweep.db"
     
     pruner = optuna.pruners.HyperbandPruner(min_resource=800)
+
+    study_name = f"hpo_{cfg.model.arch}_{cfg.model.encoder_name}"
+    cfg.study_name = study_name
+    
     study = optuna.create_study(
         direction="maximize",
         pruner=pruner,
         storage=db_path,
-        study_name="coastal_water_hpo"
+        study_name=study_name
     )
     
     # default to 60 if n_trials is not provided

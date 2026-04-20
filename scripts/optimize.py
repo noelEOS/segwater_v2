@@ -10,7 +10,10 @@ from src.models.factory import SegmentationModelFactory
 from src.models.losses import CoastalCompositeLoss
 from src.engine.trainer import SpectralTrainer
 from dotenv import load_dotenv 
+import logging
 
+
+logger = logging.getLogger(__name__)
 
 load_dotenv()
 
@@ -29,6 +32,20 @@ def objective(trial: optuna.Trial, cfg: DictConfig):
     cfg.model.dice_weight = dice_weight
     cfg.model.ce_weight = 1.0 - dice_weight
     
+
+    # --- NEW LOGGING BLOCK ---
+    logger.info("="*40)
+    logger.info(f"STARTING TRIAL {trial.number}")
+    logger.info("="*40)
+    logger.info(f"Architecture:      {cfg.model.arch}")
+    logger.info(f"Encoder:           {cfg.model.encoder_name}")
+    logger.info(f"Base LR:           {base_lr:.2e}")
+    logger.info(f"Weight Decay:      {weight_decay:.2e}")
+    logger.info(f"Label Smoothing:   {label_smoothing:.4f}")
+    logger.info(f"Dice Weight:       {dice_weight:.4f}")
+    logger.info("="*40)
+    # -------------------------
+
     run = wandb.init(
         project=cfg.project_name,
         group=cfg.study_name,
@@ -135,7 +152,7 @@ def main(cfg: DictConfig):
     
     # default to 60 if n_trials is not provided
     study.optimize(lambda trial: objective(trial, cfg), n_trials=cfg.get("n_trials", 60))
-    print("Optimization Complete. Best params:", study.best_params)
+    logger.info("Optimization Complete. Best params:", study.best_params)
 
 if __name__ == "__main__":
     main()

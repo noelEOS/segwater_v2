@@ -92,6 +92,15 @@ class SpectralTrainer:
                     preds = torch.argmax(logits, dim=1)
                     self.train_metrics.update(preds, y)
                     total_loss += loss.item()
+
+                    current_lr = self.optimizer.param_groups[0]['lr']
+                    if wandb.run is not None:
+                        wandb.log({
+                            "global_step": global_step,
+                            "train/step_loss": loss.item(),
+                            "train/learning_rate": current_lr
+                        })
+
                     num_batches += 1
                     global_step += 1
                     
@@ -102,11 +111,13 @@ class SpectralTrainer:
             
             val_metrics_dict = self.val_epoch(val_dataloader)
             val_miou = val_metrics_dict["mIoU"]
+
+            current_lr = self.optimizer.param_groups[0]['lr']
             
             if wandb.run is not None:
                 wandb.log({
                     "global_step": global_step,
-                    "train/loss": train_loss,
+                    "train/interval_loss": train_loss,
                     **{f"train/{k}": v for k, v in train_metrics_dict.items()},
                     **{f"val/{k}": v for k, v in val_metrics_dict.items()}
                 })

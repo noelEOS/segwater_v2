@@ -10,6 +10,8 @@ class SegmentationModelFactory:
             return smp.UnetPlusPlus(encoder_name=encoder_name, encoder_weights=encoder_weights, in_channels=in_channels, classes=classes)
         elif a in ("deeplabv3plus", "deeplabv3+"):
             return smp.DeepLabV3Plus(encoder_name=encoder_name, encoder_weights=encoder_weights, in_channels=in_channels, classes=classes)
+        elif a in ('DPT','dpt'):
+            return smp.DPT(encoder_name=encoder_name, encoder_weights=encoder_weights, in_channels=in_channels, classes=classes)
         elif a == "segformer":
             return smp.Segformer(encoder_name=encoder_name, encoder_weights=encoder_weights, in_channels=in_channels, classes=classes)
         elif a == "upernet":

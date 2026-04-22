@@ -155,7 +155,7 @@ def main(cfg: DictConfig):
         print(f"Connecting to remote Postgres database...")
         # Replace your current storage string with this configuration
         storage = RDBStorage(
-            url=cfg.db_path,
+            url=db_path,
             engine_kwargs={
                 "pool_size": 20,           # Allow more concurrent connections
                 "max_overflow": 0,

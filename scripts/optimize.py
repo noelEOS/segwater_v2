@@ -11,7 +11,7 @@ from src.models.losses import CoastalCompositeLoss
 from src.engine.trainer import SpectralTrainer
 from dotenv import load_dotenv 
 import logging
-
+from optuna.storages import RDBStorage
 
 logger = logging.getLogger(__name__)
 
@@ -153,8 +153,21 @@ def main(cfg: DictConfig):
     if cfg.optuna_storage:
         db_path = cfg.optuna_storage
         print(f"Connecting to remote Postgres database...")
+        # Replace your current storage string with this configuration
+        storage = RDBStorage(
+            url=cfg.db_path,
+            engine_kwargs={
+                "pool_size": 20,           # Allow more concurrent connections
+                "max_overflow": 0,
+                "pool_recycle": 300,       # Reset connections every 5 minutes
+                "pool_pre_ping": True,     # CRITICAL: Check if connection is alive before use
+                "connect_args": {
+                    "connect_timeout": 10
+                }
+            }
+        )
     else:
-        db_path = f"sqlite:///{cfg.output_dir}/optuna_sweep.db"
+        storage = f"sqlite:///{cfg.output_dir}/optuna_sweep.db"
         print(f"No remote DB found. Falling back to local SQLite: {db_path}")
     
     pruner = optuna.pruners.HyperbandPruner(min_resource=800)
@@ -162,7 +175,7 @@ def main(cfg: DictConfig):
     study = optuna.create_study(
         direction="maximize",
         pruner=pruner,
-        storage=db_path,
+        storage=storage,
         study_name=cfg.study_name,
         load_if_exists=True
     )

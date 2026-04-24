@@ -4,7 +4,7 @@ from optuna.storages import RDBStorage
 from optuna.trial import TrialState
 from dotenv import load_dotenv
 
-def cleanup_zombies(study_name: str):
+def hunt_zombies():
     load_dotenv()
     db_url = os.getenv("NEON_DB_URL")
     
@@ -13,25 +13,28 @@ def cleanup_zombies(study_name: str):
         engine_kwargs={"pool_pre_ping": True}
     )
 
-    study = optuna.load_study(study_name=study_name, storage=storage)
+    # Get all studies to audit the whole database
+    summaries = optuna.get_all_study_summaries(storage)
     
-    # Identify trials that are stuck in RUNNING
-    running_trials = study.get_trials(deepcopy=False, states=(TrialState.RUNNING,))
-    
-    if not running_trials:
-        print(f"No running trials found for study: {study_name}")
-        return
+    for summary in summaries:
+        study = optuna.load_study(study_name=summary.study_name, storage=storage)
+        running_trials = study.get_trials(deepcopy=False, states=(TrialState.RUNNING,))
+        
+        if not running_trials:
+            continue
 
-    print(f"Found {len(running_trials)} trials marked as RUNNING.")
-    
-    for trial in running_trials:
-        # CRITICAL: Do not kill the one you know is actually active!
-        # You can check trial.number or just be careful if running this while training.
-        confirm = input(f"Set Trial {trial.number} to FAIL? (y/n): ")
-        if confirm.lower() == 'y':
-            storage.set_trial_state(trial._trial_id, TrialState.FAIL)
-            print(f"Trial {trial.number} has been set to FAIL.")
+        print(f"\n--- Study: {summary.study_name} ---")
+        print(f"Found {len(running_trials)} trials marked as RUNNING.")
+        
+        for trial in running_trials:
+            # SAFETY CHECK: Confirm before killing
+            confirm = input(f"  > Set Trial {trial.number} to FAIL? (y/n/skip): ")
+            if confirm.lower() == 'y':
+                # The Senior Engineer way: uses the high-level 'tell' API
+                study.tell(trial.number, TrialState.FAIL)
+                print(f"    Trial {trial.number} set to FAIL.")
+            else:
+                print(f"    Trial {trial.number} kept as RUNNING.")
 
 if __name__ == "__main__":
-    # Replace with the specific study name you identified
-    cleanup_zombies("hpo_unetplusplus_resnet50")
+    hunt_zombies()

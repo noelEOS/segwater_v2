@@ -4,7 +4,7 @@ from optuna.storages import RDBStorage
 from optuna.trial import TrialState
 from dotenv import load_dotenv
 
-def hunt_zombies():
+def hunt_zombies_fixed():
     load_dotenv()
     db_url = os.getenv("NEON_DB_URL")
     
@@ -30,11 +30,12 @@ def hunt_zombies():
             # SAFETY CHECK: Confirm before killing
             confirm = input(f"  > Set Trial {trial.number} to FAIL? (y/n/skip): ")
             if confirm.lower() == 'y':
-                # The Senior Engineer way: uses the high-level 'tell' API
-                study.tell(trial.number, TrialState.FAIL)
-                print(f"    Trial {trial.number} set to FAIL.")
+                # THE FIX: Explicitly assign the state keyword argument
+                # This prevents the enum integer from bleeding into the 'values' column
+                study.tell(trial.number, state=TrialState.FAIL)
+                print(f"    Trial {trial.number} safely set to FAIL.")
             else:
                 print(f"    Trial {trial.number} kept as RUNNING.")
 
 if __name__ == "__main__":
-    hunt_zombies()
+    hunt_zombies_fixed()

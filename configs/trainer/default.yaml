@@ -11,4 +11,4 @@ mixed_precision: true
 precision: "bf16"
 
 # configs/trainer/default.yaml
-epochs: 10
+epochs: 1

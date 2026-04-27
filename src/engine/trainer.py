@@ -13,7 +13,7 @@ logger = logging.getLogger(__name__)
 class SpectralTrainer:
     def __init__(
         self,
-        model: nn.Module,
+        model: nn.Module,        
         optimizer: torch.optim.Optimizer,
         scheduler: torch.optim.lr_scheduler.LRScheduler,
         loss_fn: nn.Module,
@@ -23,8 +23,14 @@ class SpectralTrainer:
         num_classes: int = 2,
         ignore_index: int = 255, 
         precision: str = "fp16",
+        arch: str = "arch",      
+        encoder: str = "encoder", 
+        seed: int = 42,  
     ):
         self.model = model.to(device)
+        self.arch = arch         
+        self.encoder = encoder   
+        self.seed = seed         
         self.optimizer = optimizer
         self.scheduler = scheduler
         self.loss_fn = loss_fn.to(device)
@@ -144,7 +150,7 @@ class SpectralTrainer:
                 if save_dir is not None:
                     # If we have less than K checkpoints, or the current mIoU is better than the worst in our top K
                     if len(top_k_checkpoints) < keep_top_k or val_miou > top_k_checkpoints[0][0]:
-                        ckpt_name = f"model_step_{global_step}_iou_{val_miou:.4f}.pth"
+                        ckpt_name = f"{self.arch}_{self.encoder}_s{self.seed}_step{global_step}_miou{val_miou:.4f}.pth"
                         ckpt_path = os.path.join(save_dir, ckpt_name)
                         
                         torch.save({

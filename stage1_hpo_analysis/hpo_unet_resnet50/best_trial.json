@@ -1,0 +1,13 @@
+{
+  "study_name": "hpo_unet_resnet50",
+  "study_label": "UNet ResNet50",
+  "best_trial_number": 36,
+  "best_value": 0.9297257661819458,
+  "direction": "MAXIMIZE",
+  "params": {
+    "base_learning_rate": 0.00019260829000472654,
+    "weight_decay": 0.0004425538302150706,
+    "label_smoothing": 0.09636058081546489,
+    "dice_weight": 0.2722082421132956
+  }
+}

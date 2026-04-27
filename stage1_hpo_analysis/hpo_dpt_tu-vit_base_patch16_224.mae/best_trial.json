@@ -1,0 +1,13 @@
+{
+  "study_name": "hpo_dpt_tu-vit_base_patch16_224.mae",
+  "study_label": "DPT ViT-B MAE",
+  "best_trial_number": 15,
+  "best_value": 0.928903341293335,
+  "direction": "MAXIMIZE",
+  "params": {
+    "base_learning_rate": 6.035491477150511e-05,
+    "weight_decay": 0.01108792430243136,
+    "label_smoothing": 0.1659428585414009,
+    "dice_weight": 0.1710889081210728
+  }
+}

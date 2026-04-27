@@ -54,11 +54,14 @@ def main(cfg: DictConfig):
     train_dl = datamodule.train_dataloader()
     val_dl = datamodule.val_dataloader()
     
-    # Stage 2 Budgeting
+    # Stage 2 Budgeting (MLOps Config-Driven)
     steps_per_epoch = len(train_dl)
-    epochs = 10
+    
+    # Pull from config, default to 10 epochs and 1000 warmup if not specified
+    epochs = cfg.trainer.get("epochs", 10) 
+    warmup_steps = cfg.trainer.get("warmup_steps", 1000)
+    
     total_steps = epochs * steps_per_epoch
-    warmup_steps = 1000
     
     scheduler_warmup = torch.optim.lr_scheduler.LinearLR(
         optimizer, start_factor=1e-6, end_factor=1.0, total_iters=max(1, warmup_steps)
@@ -85,13 +88,36 @@ def main(cfg: DictConfig):
     
     os.makedirs(cfg.output_dir, exist_ok=True)
     
-    trainer.fit(
+    # 1. Train and save top 3 checkpoints. Receive the path to the best one.
+    best_ckpt_path = trainer.fit(
         train_dataloader=train_dl,
         val_dataloader=val_dl,
         max_steps=total_steps,
-        val_check_interval=max(1, val_check_interval=1200), # To-do: make this a parameter set via config
-        save_dir=cfg.output_dir
+        val_check_interval=cfg.trainer.val_check_interval, 
+        save_dir=cfg.output_dir,
+        keep_top_k=3
     )
+    
+    # 2. Evaluate on Holdout Test Dataset
+    test_dl = datamodule.test_dataloader()
+    
+    if test_dl is not None and best_ckpt_path is not None:
+        print(f"\n--- Stage 2 Complete ---")
+        print(f"Loading best checkpoint for final evaluation: {best_ckpt_path}")
+        
+        # Load the best weights
+        checkpoint = torch.load(best_ckpt_path, map_location=device, weights_only=True)
+        model.load_state_dict(checkpoint["model_state_dict"])
+        
+        # Run test function
+        test_metrics = trainer.test(test_dl)
+        print("Final Holdout Test Results:", test_metrics)
+        
+        # Log to W&B
+        if wandb.run is not None:
+            wandb.log({f"test/{k}": v for k, v in test_metrics.items()})
+    else:
+        print("\nSkipping test evaluation: test dataloader or checkpoint not found.")
             
     datamodule.teardown()
     wandb.finish()

@@ -1,0 +1,13 @@
+{
+  "study_name": "hpo_deeplabv3plus_resnet50",
+  "study_label": "DeepLabV3+ ResNet50",
+  "best_trial_number": 8,
+  "best_value": 0.929489016532898,
+  "direction": "MAXIMIZE",
+  "params": {
+    "base_learning_rate": 0.0001609168550315194,
+    "weight_decay": 0.09880278677033216,
+    "label_smoothing": 0.02779253484004518,
+    "dice_weight": 0.544243948690939
+  }
+}

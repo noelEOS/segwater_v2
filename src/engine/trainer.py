@@ -54,110 +54,125 @@ class SpectralTrainer:
         self.val_metrics = SegmentationMetrics(num_classes=num_classes, ignore_index=ignore_index, device=device.type)
 
     def fit(
-        self,
-        train_dataloader,
-        val_dataloader,
-        max_steps: int,
-        val_check_interval: int,
-        trial=None,
-        save_dir: str = None
-    ) -> float:
-        import optuna
-        import wandb
-        import os
-        
-        global_step = 0
-        best_iou = -1.0
-        
-        train_iterator = iter(train_dataloader)
-        
-        while global_step < max_steps:
-            self.model.train()
-            self.train_metrics.reset()
-            total_loss = 0.0
-            num_batches = 0
+            self,
+            train_dataloader,
+            val_dataloader,
+            max_steps: int,
+            val_check_interval: int,
+            trial=None,
+            save_dir: str = None,
+            keep_top_k: int = 3
+        ) -> str:
+            import optuna
+            import wandb
+            import os
             
-            with tqdm(total=val_check_interval, desc=f"Train [Steps {global_step} - {global_step+val_check_interval}]", leave=False) as pbar:
-                while num_batches < val_check_interval and global_step < max_steps:
-                    try:
-                        batch = next(train_iterator)
-                    except StopIteration:
-                        train_iterator = iter(train_dataloader)
-                        batch = next(train_iterator)
-                        
-                    x = batch["pixel_values"].to(self.device, non_blocking=True)
-                    y = batch["labels"].to(self.device, non_blocking=True)
-                    
-                    self.optimizer.zero_grad(set_to_none=True)
-                    
-                    with torch.autocast(device_type=self.device.type, enabled=self.use_amp, dtype=self.amp_dtype):
-                        logits = self.model(x)
-                        loss_dict = self.loss_fn(logits, y)
-                        loss = loss_dict["loss"]
-                        
-                    self.scaler.scale(loss).backward()
-                    
-                    if self.gradient_clip_val > 0.0:
-                        self.scaler.unscale_(self.optimizer)
-                        torch.nn.utils.clip_grad_norm_(self.model.parameters(), self.gradient_clip_val)
-                        
-                    self.scaler.step(self.optimizer)
-                    self.scaler.update()
-                    
-                    if self.scheduler is not None:
-                        self.scheduler.step()
-                        
-                    preds = torch.argmax(logits, dim=1)
-                    self.train_metrics.update(preds, y)
-                    total_loss += loss.item()
-
-                    current_lr = self.optimizer.param_groups[0]['lr']
-                    if wandb.run is not None:
-                        wandb.log({
-                            "global_step": global_step,
-                            "train/step_loss": loss.item(),
-                            "train/learning_rate": current_lr
-                        })
-
-                    num_batches += 1
-                    global_step += 1
-                    
-                    pbar.update(1)
+            global_step = 0
+            top_k_checkpoints = [] # List to track (val_miou, ckpt_path)
+            
+            train_iterator = iter(train_dataloader)
+            
+            while global_step < max_steps:
+                self.model.train()
+                self.train_metrics.reset()
+                total_loss = 0.0
+                num_batches = 0
                 
-            train_metrics_dict = self.train_metrics.compute()
-            train_loss = total_loss / max(1, num_batches)
-            
-            val_metrics_dict = self.val_epoch(val_dataloader)
-            val_miou = val_metrics_dict["mIoU"]
+                with tqdm(total=val_check_interval, desc=f"Train [Steps {global_step} - {global_step+val_check_interval}]", leave=False) as pbar:
+                    while num_batches < val_check_interval and global_step < max_steps:
+                        try:
+                            batch = next(train_iterator)
+                        except StopIteration:
+                            train_iterator = iter(train_dataloader)
+                            batch = next(train_iterator)
+                            
+                        x = batch["pixel_values"].to(self.device, non_blocking=True)
+                        y = batch["labels"].to(self.device, non_blocking=True)
+                        
+                        self.optimizer.zero_grad(set_to_none=True)
+                        
+                        with torch.autocast(device_type=self.device.type, enabled=self.use_amp, dtype=self.amp_dtype):
+                            logits = self.model(x)
+                            loss_dict = self.loss_fn(logits, y)
+                            loss = loss_dict["loss"]
+                            
+                        self.scaler.scale(loss).backward()
+                        
+                        if self.gradient_clip_val > 0.0:
+                            self.scaler.unscale_(self.optimizer)
+                            torch.nn.utils.clip_grad_norm_(self.model.parameters(), self.gradient_clip_val)
+                            
+                        self.scaler.step(self.optimizer)
+                        self.scaler.update()
+                        
+                        if self.scheduler is not None:
+                            self.scheduler.step()
+                            
+                        preds = torch.argmax(logits, dim=1)
+                        self.train_metrics.update(preds, y)
+                        total_loss += loss.item()
 
-            current_lr = self.optimizer.param_groups[0]['lr']
-            
-            if wandb.run is not None:
-                wandb.log({
-                    "global_step": global_step,
-                    "train/interval_loss": train_loss,
-                    **{f"train/{k}": v for k, v in train_metrics_dict.items()},
-                    **{f"val/{k}": v for k, v in val_metrics_dict.items()}
-                })
+                        current_lr = self.optimizer.param_groups[0]['lr']
+                        if wandb.run is not None:
+                            wandb.log({
+                                "global_step": global_step,
+                                "train/step_loss": loss.item(),
+                                "train/learning_rate": current_lr
+                            })
+
+                        num_batches += 1
+                        global_step += 1
+                        
+                        pbar.update(1)
+                    
+                train_metrics_dict = self.train_metrics.compute()
+                train_loss = total_loss / max(1, num_batches)
                 
-            if val_miou > best_iou:
-                best_iou = val_miou
+                val_metrics_dict = self.val_epoch(val_dataloader)
+                val_miou = val_metrics_dict["mIoU"]
+                
+                if wandb.run is not None:
+                    wandb.log({
+                        "global_step": global_step,
+                        "train/interval_loss": train_loss,
+                        **{f"train/{k}": v for k, v in train_metrics_dict.items()},
+                        **{f"val/{k}": v for k, v in val_metrics_dict.items()}
+                    })
+                    
+                # --- TOP-K CHECKPOINTING LOGIC ---
                 if save_dir is not None:
-                    ckpt_path = os.path.join(save_dir, "best_model.pth")
-                    torch.save({
-                        "step": global_step,
-                        "model_state_dict": self.model.state_dict(),
-                        "optimizer_state_dict": self.optimizer.state_dict(),
-                        "best_iou": best_iou
-                    }, ckpt_path)
-                    print(f"Step {global_step}: New best mIoU {best_iou:.4f} saved.")
-                    
-            if trial is not None:
-                trial.report(val_miou, step=global_step)
-                if trial.should_prune():
-                    raise optuna.TrialPruned(f"Pruned at step {global_step} with mIoU {val_miou:.4f}")
-                    
-        return best_iou
+                    # If we have less than K checkpoints, or the current mIoU is better than the worst in our top K
+                    if len(top_k_checkpoints) < keep_top_k or val_miou > top_k_checkpoints[0][0]:
+                        ckpt_name = f"model_step_{global_step}_iou_{val_miou:.4f}.pth"
+                        ckpt_path = os.path.join(save_dir, ckpt_name)
+                        
+                        torch.save({
+                            "step": global_step,
+                            "model_state_dict": self.model.state_dict(),
+                            "optimizer_state_dict": self.optimizer.state_dict(),
+                            "val_miou": val_miou
+                        }, ckpt_path)
+                        
+                        print(f"Step {global_step}: Saved new Top-{keep_top_k} checkpoint -> {ckpt_name}")
+                        
+                        # Add to list and sort by mIoU (ascending, so index 0 is the lowest mIoU)
+                        top_k_checkpoints.append((val_miou, ckpt_path))
+                        top_k_checkpoints.sort(key=lambda x: x[0])
+                        
+                        # If we exceeded our keep limit, remove the lowest one from disk and the list
+                        if len(top_k_checkpoints) > keep_top_k:
+                            removed_miou, removed_path = top_k_checkpoints.pop(0)
+                            if os.path.exists(removed_path):
+                                os.remove(removed_path)
+                                print(f"Removed older checkpoint -> {os.path.basename(removed_path)} (mIoU: {removed_miou:.4f})")
+                        
+                if trial is not None:
+                    trial.report(val_miou, step=global_step)
+                    if trial.should_prune():
+                        raise optuna.TrialPruned(f"Pruned at step {global_step} with mIoU {val_miou:.4f}")
+                        
+            # Return the path to the best checkpoint (the last item in our sorted list)
+            return top_k_checkpoints[-1][1] if top_k_checkpoints else None
         
     @torch.no_grad()
     def val_epoch(self, dataloader) -> Dict[str, Any]:

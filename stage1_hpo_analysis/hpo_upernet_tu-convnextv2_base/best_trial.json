@@ -1,0 +1,13 @@
+{
+  "study_name": "hpo_upernet_tu-convnextv2_base",
+  "study_label": "UPerNet ConvNeXtV2 Base",
+  "best_trial_number": 51,
+  "best_value": 0.9337127208709717,
+  "direction": "MAXIMIZE",
+  "params": {
+    "base_learning_rate": 0.00023468832950889273,
+    "weight_decay": 0.0180783898569034,
+    "label_smoothing": 0.08782554173817123,
+    "dice_weight": 0.1245980917337618
+  }
+}

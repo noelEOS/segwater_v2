@@ -12,4 +12,3 @@ precision: "bf16"
 
 # configs/trainer/default.yaml
 epochs: 10
-warmup_steps: 1000

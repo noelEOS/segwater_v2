@@ -1,5 +1,6 @@
 import torch
 import torch.nn as nn
+import optuna
 from typing import Dict, Any
 
 from tqdm import tqdm
@@ -63,7 +64,7 @@ class SpectralTrainer:
             save_dir: str = None,
             keep_top_k: int = 3
         ) -> str:
-            import optuna
+            #import optuna
             import wandb
             import os
             
@@ -167,6 +168,7 @@ class SpectralTrainer:
                                 print(f"Removed older checkpoint -> {os.path.basename(removed_path)} (mIoU: {removed_miou:.4f})")
                         
                 if trial is not None:
+                    #import optuna
                     trial.report(val_miou, step=global_step)
                     if trial.should_prune():
                         raise optuna.TrialPruned(f"Pruned at step {global_step} with mIoU {val_miou:.4f}")

@@ -6,6 +6,9 @@ data/raw/
 data/processed/
 notebooks/
 
+# Chakpoints
+checkpoints/
+
 # My notes
 docs/my_notes/
 

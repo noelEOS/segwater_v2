@@ -1,8 +1,9 @@
 import segmentation_models_pytorch as smp
+from typing import Optional
 
 class SegmentationModelFactory:
     @staticmethod
-    def build(arch: str, encoder_name: str, in_channels: int, classes: int,  encoder_weights: str = "imagenet"):
+    def build(arch: str, encoder_name: str, in_channels: int, classes: int,  encoder_weights: Optional[str] = "imagenet"):
         a = arch.lower()
         if a == "unet":
             return smp.Unet(encoder_name=encoder_name, encoder_weights=encoder_weights, in_channels=in_channels, classes=classes)

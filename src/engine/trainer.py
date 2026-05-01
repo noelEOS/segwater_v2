@@ -69,14 +69,15 @@ class SpectralTrainer:
             trial=None,
             save_dir: str = None,
             keep_top_k: int = 3
-        ) -> str:
+        ):
             #import optuna
             import wandb
             import os
             
             global_step = 0
             top_k_checkpoints = [] # List to track (val_miou, ckpt_path)
-            
+            best_val_miou = 0.0
+
             train_iterator = iter(train_dataloader)
             
             while global_step < max_steps:
@@ -137,6 +138,8 @@ class SpectralTrainer:
                 
                 val_metrics_dict = self.val_epoch(val_dataloader)
                 val_miou = val_metrics_dict["mIoU"]
+
+                best_val_miou = max(best_val_miou, val_miou)
                 
                 if wandb.run is not None:
                     wandb.log({
@@ -180,8 +183,9 @@ class SpectralTrainer:
                         raise optuna.TrialPruned(f"Pruned at step {global_step} with mIoU {val_miou:.4f}")
                         
             # Return the path to the best checkpoint (the last item in our sorted list)
-            return top_k_checkpoints[-1][1] if top_k_checkpoints else None
-        
+            best_ckpt_path = top_k_checkpoints[-1][1] if top_k_checkpoints else None
+            return best_val_miou, best_ckpt_path
+
     @torch.no_grad()
     def val_epoch(self, dataloader) -> Dict[str, Any]:
         self.model.eval()

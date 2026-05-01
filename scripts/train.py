@@ -94,7 +94,7 @@ def main(cfg: DictConfig):
     os.makedirs(cfg.output_dir, exist_ok=True)
     
     # 1. Train and save top 3 checkpoints. Receive the path to the best one.
-    best_ckpt_path = trainer.fit(
+    _, best_ckpt_path = trainer.fit(
         train_dataloader=train_dl,
         val_dataloader=val_dl,
         max_steps=total_steps,

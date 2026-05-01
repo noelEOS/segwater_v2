@@ -133,7 +133,7 @@ def objective(trial: optuna.Trial, cfg: DictConfig):
         num_classes=cfg.model.num_classes
     )
     
-    best_iou = trainer.fit(
+    best_iou,_ = trainer.fit(
         train_dataloader=train_dl,
         val_dataloader=val_dl,
         max_steps=max_steps,

@@ -6,8 +6,12 @@ data/raw/
 data/processed/
 notebooks/
 
-# Chakpoints
+# Checkpoints
 checkpoints/
+
+# inference maps
+outputs/
+
 
 # My notes
 docs/my_notes/

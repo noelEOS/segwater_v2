@@ -8,6 +8,7 @@ from omegaconf import DictConfig, OmegaConf
 import torch
 from torch.utils.data import DataLoader
 from tqdm import tqdm
+from src.utils.vectorizer import ShorelineVectorizer
 
 # Import our custom pipeline modules
 from src.data.inference_dataset import InferenceDataset
@@ -175,14 +176,45 @@ def main(cfg: DictConfig):
     
     if cfg.inference.output.extract_shoreline:
         logger.info("[POST-PROC] Shoreline extraction requested! Handing off to Vectorizer...")
-        # NOTE: Marching Squares logic will go here
+
+        min_length_meters = (
+            cfg.inference.post_processing.filtering.min_length_meters
+            if cfg.inference.post_processing.filtering.apply_length_filter
+            else 0.0
+        )
+
+        simplify_tolerance_meters = (
+            cfg.inference.post_processing.smoothing.simplify_tolerance_meters
+            if cfg.inference.post_processing.smoothing.apply_simplification
+            else 0.0
+        )
+
+        vectorizer = ShorelineVectorizer(
+            prob_map_path=output_map_path,
+            reference_tif_path=input_image,
+            shape=global_shape,
+            precision=cfg.inference.data.precision,
+            threshold=cfg.inference.post_processing.threshold,
+            min_length_meters=min_length_meters,
+            simplify_tolerance_meters=simplify_tolerance_meters,
+        )
+
+        shoreline_path = vectorizer.extract_and_save(
+            output_geojson_path=cfg.inference.output.vector_path
+        )
+
+        logger.info(f"[POST-PROC] Shoreline vector output available at: {shoreline_path}")
+
     else:
         logger.info("[POST-PROC] Shoreline extraction bypassed via configuration.")
 
     elapsed = (time.time() - start_time) / 60
     logger.info("=" * 60)
     logger.info(f"✅ SEGWATER V2 INFERENCE SUCCESSFUL in {elapsed:.2f} minutes.")
-    logger.info(f"🗺️  Output available at: {output_map_path}")
+    logger.info(f"🧠 Probability map available at: {output_map_path}")
+    if cfg.inference.output.extract_shoreline:
+        logger.info(f"🌊 Shoreline vector available at: {cfg.inference.output.vector_path}")
+
     logger.info("=" * 60)
 
 if __name__ == "__main__":

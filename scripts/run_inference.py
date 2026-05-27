@@ -49,12 +49,20 @@ def main(cfg: DictConfig):
     logger.info("--- STAGE 2: MODEL INSTANTIATION ---")
     logger.info(f"[MODEL] Building {cfg.model.architecture} with {cfg.model.encoder} encoder...")
     
+    # We  pull directly from  configs/model/smp.yaml safely
+    arch = cfg.model.arch
+    encoder = cfg.model.encoder_name
+    in_channels = cfg.model.in_channels
+    classes = cfg.model.num_classes
+
+    logger.info(f"[MODEL] Building {arch} with {encoder} encoder ({classes} classes)...")
+    
     model = SegmentationModelFactory.build(
-        arch_name=cfg.model.architecture,
-        encoder_name=cfg.model.encoder,
-        encoder_weights=None, 
-        in_channels=cfg.model.in_channels,
-        classes=cfg.model.classes
+        arch=arch,
+        encoder_name=encoder,
+        encoder_weights=None, # Prevent downloading ImageNet weights again
+        in_channels=in_channels,
+        classes=classes
     )
     
     ckpt_path = cfg.inference.checkpoint_path
@@ -133,12 +141,13 @@ def main(cfg: DictConfig):
             with torch.autocast(device_type=device.type, dtype=amp_dtype):
                 logits = model(images)
                 
-                # Apply Sigmoid to get soft probabilities [0.0, 1.0]
-                probs = torch.sigmoid(logits)
-                
-                # Squeeze the channel dimension if shape is [Batch, 1, Height, Width] -> [Batch, Height, Width]
-                if probs.dim() == 4 and probs.shape[1] == 1:
-                    probs = probs.squeeze(1)
+                if cfg.model.num_classes == 1:
+                    # Single class logic (Sigmoid)
+                    probs = torch.sigmoid(logits).squeeze(1)
+                else:
+                    # Multi-class logic (Softmax)
+                    # Shape goes from [B, 2, H, W] -> Softmax -> slice Channel 1 (Water) -> [B, H, W]
+                    probs = torch.softmax(logits, dim=1)[:, 1, :, :]
             
             # Send to disk
             stitcher.add_batch(probs, metadata)

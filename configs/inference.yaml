@@ -1,0 +1,32 @@
+inference:
+  # --- Hardware & Weights ---
+  device: "cuda"
+  checkpoint_path: "outputs/checkpoints/best_model.pth"
+
+  # --- Input Data & Tiling Geometry ---
+  data:
+    input_image: "data/raw/sentinel1_swath.tif"
+    batch_size: 8
+    num_workers: 4
+    tile_size: 1024
+    buffer_size: 128
+    fill_value: 0.0          # NoData padding for edge tiles
+    precision: "float32"     # Options: "float32" or "float16"
+
+  # --- Output Destinations ---
+  output:
+    probability_map: "outputs/inference/prob_canvas.memmap"
+    extract_shoreline: True
+    vector_path: "outputs/inference/shoreline.geojson"
+
+  # --- Science / Post-Processing Logic ---
+  post_processing:
+    threshold: 0.5           # The sigmoid crossing point for the shoreline
+
+    filtering:
+      apply_length_filter: False
+      min_length_meters: 50.0
+
+    smoothing:
+      apply_simplification: False
+      simplify_tolerance_meters: 10.0

@@ -2,6 +2,7 @@ import os
 import time
 import logging
 from pathlib import Path
+import numpy as np
 
 import hydra
 from omegaconf import DictConfig, OmegaConf
@@ -17,6 +18,26 @@ from src.models.factory import SegmentationModelFactory
 
 # Configure basic logging level (Hydra handles the file routing automatically)
 logger = logging.getLogger(__name__)
+
+def build_inference_transform(cfg):
+    if not cfg.inference.data.normalization.enabled:
+        return None
+
+    means = np.array(cfg.inference.data.normalization.means, dtype=np.float32)
+    stds = np.array(cfg.inference.data.normalization.stds, dtype=np.float32)
+
+    def transform(data: np.ndarray) -> np.ndarray:
+        data = data.astype(np.float32, copy=False)
+
+        if data.shape[0] != len(means):
+            raise ValueError(
+                f"Expected {len(means)} channels for normalization, "
+                f"but got {data.shape[0]} channels."
+            )
+
+        return (data - means[:, None, None]) / stds[:, None, None]
+
+    return transform
 
 @hydra.main(version_base="1.3", config_path="../configs", config_name="inference")
 def main(cfg: DictConfig):
@@ -96,6 +117,9 @@ def main(cfg: DictConfig):
     logger.info("--- STAGE 3: DATA PIPELINE SETUP ---")
     input_image = cfg.inference.data.input_image
     logger.info(f"[DATA] Mounting SAR Swath: {input_image}")
+
+    inference_transform = build_inference_transform(cfg)
+
     
     dataset = InferenceDataset(
         image_path=input_image,
@@ -103,7 +127,7 @@ def main(cfg: DictConfig):
         buffer_size=cfg.inference.data.buffer_size,
         fill_value=cfg.inference.data.fill_value,
         precision=cfg.inference.data.precision,
-        transform=None # Add torchvision/albumentations here if required
+        transform=inference_transform,
     )
     
     logger.info(f"[DATA] Swath fully gridded. Total tiles to process: {len(dataset)}")

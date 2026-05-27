@@ -17,6 +17,11 @@ inference:
     buffer_size: 128
     fill_value: 0.0          # NoData padding for edge tiles
     precision: "float32"     # Options: "float32" or "float16"
+    normalization:
+      enabled: true
+      method: "standardize_db"
+      means: [-15.510920639155525, -23.57375764750785]
+      stds: [6.564080466988128, 7.6567358472184]
 
   # --- Output Destinations ---
   output:

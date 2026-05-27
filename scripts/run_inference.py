@@ -47,7 +47,7 @@ def main(cfg: DictConfig):
     # 2. Model & Checkpoint Loading
     # ---------------------------------------------------------
     logger.info("--- STAGE 2: MODEL INSTANTIATION ---")
-    logger.info(f"[MODEL] Building {cfg.model.architecture} with {cfg.model.encoder} encoder...")
+    logger.info(f"[MODEL] Building {cfg.model.arch} with {cfg.model.encoder_name} encoder...")
     
     # We  pull directly from  configs/model/smp.yaml safely
     arch = cfg.model.arch

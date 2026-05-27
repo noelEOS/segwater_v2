@@ -66,15 +66,23 @@ def main(cfg: DictConfig):
     )
     
     ckpt_path = cfg.inference.checkpoint_path
-    logger.info(f"[MODEL] Locating checkpoint at: {ckpt_path}")
-    if not os.path.exists(ckpt_path):
-        logger.critical(f"[FATAL] Checkpoint not found at {ckpt_path}!")
-        raise FileNotFoundError(f"Missing checkpoint: {ckpt_path}")
 
     logger.info("[MODEL] Loading state dictionary into VRAM...")
     
-    # Pure PyTorch loading (no Lightning prefixes to strip!)
-    state_dict = torch.load(ckpt_path, map_location="cpu")
+    # 1. Load the comprehensive checkpoint object
+    checkpoint = torch.load(str(ckpt_path), map_location="cpu")
+    
+    # 2. Safely unpack the actual weights (Handling our custom MLOps format)
+    if "model_state_dict" in checkpoint:
+        state_dict = checkpoint["model_state_dict"]
+        saved_step = checkpoint.get('step', 'Unknown')
+        saved_miou = checkpoint.get('val_miou', 'Unknown')
+        logger.info(f"[MODEL] Successfully unpacked weights from Step: {saved_step} | mIoU: {saved_miou}")
+    else:
+        # Fallback just in case you ever load a raw PyTorch model
+        state_dict = checkpoint
+        logger.info("[MODEL] Loaded raw state dictionary directly.")
+
     model.load_state_dict(state_dict, strict=True)
     
     model.to(device)

@@ -15,7 +15,7 @@ inference:
     num_workers: 4
     tile_size: 1024
     buffer_size: 128
-    fill_value: 0.0          # NoData padding for edge tiles
+    fill_value: 0.0          # Fallback scalar NoData padding for edge tiles.
     precision: "float32"     # Options: "float32" or "float16"
     normalization:
       enabled: true
@@ -23,20 +23,30 @@ inference:
       means: [-15.510920639155525, -23.57375764750785]
       stds: [6.564080466988128, 7.6567358472184]
     padding:
+      # Recommended for raw dB inputs: pad out-of-bounds edge context with
+      # the training-set channel means so the normalized padding becomes 0.
       mode: "training_channel_mean"
       channel_fill_values:
         - -15.510920639155525
         - -23.57375764750785
 
-  # --- Output Destinations ---
+  # --- Output Organization & Provenance ---
   output:
-    probability_map: "outputs/inference/prob_canvas.memmap"
-    extract_shoreline: True
-    vector_path: "outputs/inference/shoreline.geojson"
+    # Outputs are written as:
+    #   {root_dir}/{run_name_or_checkpoint_id}/{scene_id}/{scene_id}_{product}.{ext}
+    # By default, the run folder is deterministic and derived from the checkpoint
+    # identity, not from a timestamp. Timestamps are stored in metadata instead.
+    root_dir: "outputs/inference/runs"
+    run_name: null            # Optional manual run name. If null, use checkpoint identity.
+    overwrite: false          # Protect existing scene outputs by default.
+
+    save_probability_geotiff: true
+    save_binary_mask_geotiff: false
+    extract_shoreline: true
 
   # --- Science / Post-Processing Logic ---
   post_processing:
-    threshold: 0.5           # The sigmoid crossing point for the shoreline
+    threshold: 0.5           # The probability crossing point for the shoreline/mask.
 
     filtering:
       apply_length_filter: False

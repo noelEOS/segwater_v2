@@ -1,11 +1,10 @@
 import os
 import logging
-from typing import List
 
 import numpy as np
 import rasterio
 import geopandas as gpd
-from shapely.geometry import LineString, Polygon
+from shapely.geometry import LineString
 from skimage import measure
 
 logger = logging.getLogger(__name__)
@@ -84,72 +83,146 @@ class ShorelineVectorizer:
             if line.is_empty or line.length == 0:
                 continue
 
-            if line.length < self.min_length_meters:
-                continue
-
             records.append(
                 {
                     "contour_id": contour_id,
                     "threshold": self.threshold,
-                    "length": line.length,
                     "n_vertices": len(line.coords),
                     "geometry": line,
                 }
             )
 
         logger.info(
-            f"Filtering complete. {len(records)} valid geometries remain before top-k filtering."
+            f"Contour conversion complete. {len(records)} valid geometries before post-processing."
         )
 
         gdf = gpd.GeoDataFrame(records, geometry="geometry", crs=self.crs)
 
-        if self.keep_top_k is not None and self.keep_top_k > 0:
-            gdf = (
-                gdf.sort_values("length", ascending=False)
-                .head(self.keep_top_k)
-                .reset_index(drop=True)
-            )
-            gdf["rank"] = range(1, len(gdf) + 1)
-
-        logger.info(f"Final shoreline output contains {len(gdf)} geometries before simplification.")
-
-        gdf = gpd.GeoDataFrame(records, geometry="geometry", crs=self.crs)
-
-        if self.keep_top_k is not None and self.keep_top_k > 0:
-            gdf = (
-                gdf.sort_values("length", ascending=False)
-                .head(self.keep_top_k)
-                .reset_index(drop=True)
-            )
-            gdf["rank"] = range(1, len(gdf) + 1)
-
-        logger.info(f"Final shoreline output contains {len(gdf)} geometries.")
-
-        if self.simplify_tolerance_meters > 0 and len(gdf) > 0:
-            logger.info(
-                f"Simplifying final shoreline geometries with "
-                f"{self.simplify_tolerance_meters} meters tolerance..."
+        if len(gdf) == 0:
+            logger.warning(
+                "No valid contour geometries were extracted. "
+                "Writing an empty GeoJSON."
             )
 
-            if gdf.crs is None:
+            os.makedirs(os.path.dirname(output_geojson_path), exist_ok=True)
+            gdf.to_file(output_geojson_path, driver="GeoJSON")
+
+            logger.info(f"Empty shoreline vector saved to {output_geojson_path}")
+            return output_geojson_path
+
+        # ---------------------------------------------------------
+        # Metric post-processing
+        # ---------------------------------------------------------
+        if gdf.crs is None:
+            logger.warning(
+                "Source CRS is undefined. Cannot compute lengths or simplify in meters. "
+                "Using source CRS units for top-k only."
+            )
+
+            gdf["length_source_crs"] = gdf.geometry.length
+
+            if self.min_length_meters > 0:
                 logger.warning(
-                    "Source CRS is undefined. Cannot safely simplify in meters. "
+                    "min_length_meters was configured, but CRS is undefined. "
+                    "Skipping length filtering."
+                )
+
+            if self.keep_top_k is not None and self.keep_top_k > 0:
+                gdf = (
+                    gdf.sort_values("length_source_crs", ascending=False)
+                    .head(self.keep_top_k)
+                    .reset_index(drop=True)
+                )
+                gdf["rank"] = range(1, len(gdf) + 1)
+
+            if self.simplify_tolerance_meters > 0:
+                logger.warning(
+                    "simplify_tolerance_meters was configured, but CRS is undefined. "
                     "Skipping simplification."
                 )
-            else:
-                try:
-                    metric_crs = gdf.estimate_utm_crs()
 
-                    if metric_crs is None:
+        else:
+            try:
+                metric_crs = gdf.estimate_utm_crs()
+
+                if metric_crs is None:
+                    logger.warning(
+                        "Could not estimate a suitable metric CRS. "
+                        "Using source CRS units for top-k only."
+                    )
+
+                    gdf["length_source_crs"] = gdf.geometry.length
+
+                    if self.min_length_meters > 0:
                         logger.warning(
-                            "Could not estimate a suitable metric CRS. "
+                            "min_length_meters was configured, but no metric CRS could be estimated. "
+                            "Skipping length filtering."
+                        )
+
+                    if self.keep_top_k is not None and self.keep_top_k > 0:
+                        gdf = (
+                            gdf.sort_values("length_source_crs", ascending=False)
+                            .head(self.keep_top_k)
+                            .reset_index(drop=True)
+                        )
+                        gdf["rank"] = range(1, len(gdf) + 1)
+
+                    if self.simplify_tolerance_meters > 0:
+                        logger.warning(
+                            "simplify_tolerance_meters was configured, but no metric CRS could be estimated. "
                             "Skipping simplification."
                         )
-                    else:
-                        logger.info(f"Using metric CRS for simplification: {metric_crs}")
 
-                        original_crs = gdf.crs
-                        gdf_metric = gdf.to_crs(metric_crs)
+                else:
+                    logger.info(f"Using metric CRS for vector post-processing: {metric_crs}")
+
+                    original_crs = gdf.crs
+                    gdf_metric = gdf.to_crs(metric_crs)
+
+                    # Lengths are now truly in meters.
+                    gdf_metric["length_m"] = gdf_metric.geometry.length
+
+                    # Optional length filtering. This should be disabled by default.
+                    if self.min_length_meters > 0:
+                        before = len(gdf_metric)
+
+                        gdf_metric = gdf_metric[
+                            gdf_metric["length_m"] >= self.min_length_meters
+                        ].copy()
+
+                        after = len(gdf_metric)
+
+                        logger.info(
+                            f"Metric length filtering: kept {after}/{before} geometries "
+                            f"with length >= {self.min_length_meters} m."
+                        )
+
+                        if after == 0:
+                            logger.warning(
+                                "No shoreline geometries remain after metric length filtering. "
+                                "The output GeoJSON will be empty. "
+                                "Consider disabling the length filter or lowering min_length_meters."
+                            )
+
+                    # Default shoreline selection: keep the longest k contours.
+                    if self.keep_top_k is not None and self.keep_top_k > 0 and len(gdf_metric) > 0:
+                        gdf_metric = (
+                            gdf_metric.sort_values("length_m", ascending=False)
+                            .head(self.keep_top_k)
+                            .reset_index(drop=True)
+                        )
+                        gdf_metric["rank"] = range(1, len(gdf_metric) + 1)
+
+                        logger.info(
+                            f"Top-k filtering enabled. Keeping {len(gdf_metric)} longest geometries."
+                        )
+
+                    # Optional simplification, after top-k, in meters.
+                    if self.simplify_tolerance_meters > 0 and len(gdf_metric) > 0:
+                        logger.info(
+                            f"Simplifying final shoreline geometries with "
+                            f"{self.simplify_tolerance_meters} meters tolerance..."
+                        )
 
                         gdf_metric["geometry"] = gdf_metric.geometry.simplify(
                             tolerance=self.simplify_tolerance_meters,
@@ -158,19 +231,35 @@ class ShorelineVectorizer:
 
                         gdf_metric["length_simplified_m"] = gdf_metric.geometry.length
                         gdf_metric["n_vertices_simplified"] = gdf_metric.geometry.apply(
-                            lambda geom: len(geom.coords) if geom is not None and not geom.is_empty else 0
+                            lambda geom: (
+                                len(geom.coords)
+                                if geom is not None and not geom.is_empty
+                                else 0
+                            )
                         )
 
-                        gdf = gdf_metric.to_crs(original_crs)
+                    gdf = gdf_metric.to_crs(original_crs)
 
-                except Exception as exc:
-                    logger.warning(
-                        f"Metric simplification failed: {exc}. "
-                        "Continuing with unsimplified geometries."
-                    )        
+            except Exception as exc:
+                logger.warning(
+                    f"Metric vector post-processing failed: {exc}. "
+                    "Falling back to source CRS top-k without length filtering or simplification."
+                )
+
+                gdf["length_source_crs"] = gdf.geometry.length
+
+                if self.keep_top_k is not None and self.keep_top_k > 0:
+                    gdf = (
+                        gdf.sort_values("length_source_crs", ascending=False)
+                        .head(self.keep_top_k)
+                        .reset_index(drop=True)
+                    )
+                    gdf["rank"] = range(1, len(gdf) + 1)
+
+        logger.info(f"Final shoreline output contains {len(gdf)} geometries.")
 
         os.makedirs(os.path.dirname(output_geojson_path), exist_ok=True)
         gdf.to_file(output_geojson_path, driver="GeoJSON")
-        
+
         logger.info(f"Shoreline vector saved successfully to {output_geojson_path}")
         return output_geojson_path

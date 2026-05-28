@@ -221,6 +221,7 @@ def main(cfg: DictConfig):
             threshold=cfg.inference.post_processing.threshold,
             min_length_meters=min_length_meters,
             simplify_tolerance_meters=simplify_tolerance_meters,
+            keep_top_k=cfg.inference.post_processing.filtering.keep_top_k
         )
 
         shoreline_path = vectorizer.extract_and_save(

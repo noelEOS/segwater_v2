@@ -36,6 +36,7 @@ inference:
     filtering:
       apply_length_filter: False
       min_length_meters: 50.0
+      keep_top_k: 5
 
     smoothing:
       apply_simplification: False

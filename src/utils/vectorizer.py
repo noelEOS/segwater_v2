@@ -24,7 +24,8 @@ class ShorelineVectorizer:
         precision: str,
         threshold: float,
         min_length_meters: float,
-        simplify_tolerance_meters: float
+        simplify_tolerance_meters: float,
+        keep_top_k: int | None = None,
     ):
         self.prob_map_path = prob_map_path
         self.reference_tif_path = reference_tif_path
@@ -35,6 +36,7 @@ class ShorelineVectorizer:
         self.threshold = threshold
         self.min_length_meters = min_length_meters
         self.simplify_tolerance_meters = simplify_tolerance_meters
+        self.keep_top_k = keep_top_k
 
         # Load spatial metadata from the original SAR swath
         with rasterio.open(self.reference_tif_path) as src:
@@ -62,43 +64,59 @@ class ShorelineVectorizer:
         contours = measure.find_contours(prob_map, level=self.threshold)
         logger.info(f"Extracted {len(contours)} raw contour fragments.")
 
-        geometries = []
-        
-        logger.info("Applying geospatial projection and Douglas-Peucker simplification...")
-        for contour in contours:
-            # 1. Coordinate Transformation
-            # contour[:, 0] is row (Y), contour[:, 1] is col (X)
-            # We use rasterio's affine transform to map sub-pixel floats to Lat/Lon or UTM
+        records = []
+
+        logger.info("Applying geospatial projection and optional simplification...")
+
+        for contour_id, contour in enumerate(contours):
             xs, ys = rasterio.transform.xy(
-                self.transform, 
-                contour[:, 0], 
-                contour[:, 1]
+                self.transform,
+                contour[:, 0],
+                contour[:, 1],
+                offset="center",
             )
-            
-            # 2. Vectorization
-            # A contour must have at least 2 points to be a line
+
             if len(xs) < 2:
                 continue
-                
+
             line = LineString(zip(xs, ys))
-            
-            # 3. Geometric Filtering
-            # Drop tiny artifacts (e.g., small puddles or isolated noisy SAR pixels)
+
+            if line.is_empty or line.length == 0:
+                continue
+
             if line.length < self.min_length_meters:
                 continue
-                
-            # 4. Douglas-Peucker Smoothing
-            # Smooths out the jagged edges caused by the 10m SAR resolution grid
-            if self.simplify_tolerance_meters > 0:
-                line = line.simplify(self.simplify_tolerance_meters, preserve_topology=True)
-            
-            geometries.append(line)
 
-        # 5. Export to GeoJSON
-        logger.info(f"Filtering complete. {len(geometries)} valid geometries remain.")
-        
-        gdf = gpd.GeoDataFrame(geometry=geometries, crs=self.crs)
-        
+            if self.simplify_tolerance_meters > 0:
+                line = line.simplify(
+                    self.simplify_tolerance_meters,
+                    preserve_topology=True,
+                )
+
+            records.append(
+                {
+                    "contour_id": contour_id,
+                    "threshold": self.threshold,
+                    "length": line.length,
+                    "n_vertices": len(line.coords),
+                    "geometry": line,
+                }
+            )
+
+        logger.info(f"Filtering complete. {len(records)} valid geometries remain before top-k filtering.")
+
+        gdf = gpd.GeoDataFrame(records, geometry="geometry", crs=self.crs)
+
+        if self.keep_top_k is not None and self.keep_top_k > 0:
+            gdf = (
+                gdf.sort_values("length", ascending=False)
+                .head(self.keep_top_k)
+                .reset_index(drop=True)
+            )
+            gdf["rank"] = range(1, len(gdf) + 1)
+
+        logger.info(f"Final shoreline output contains {len(gdf)} geometries.")
+
         os.makedirs(os.path.dirname(output_geojson_path), exist_ok=True)
         gdf.to_file(output_geojson_path, driver="GeoJSON")
         

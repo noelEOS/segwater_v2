@@ -66,7 +66,7 @@ class ShorelineVectorizer:
 
         records = []
 
-        logger.info("Applying geospatial projection and optional simplification...")
+        logger.info("Applying geospatial projection...")
 
         for contour_id, contour in enumerate(contours):
             xs, ys = rasterio.transform.xy(
@@ -87,12 +87,6 @@ class ShorelineVectorizer:
             if line.length < self.min_length_meters:
                 continue
 
-            if self.simplify_tolerance_meters > 0:
-                line = line.simplify(
-                    self.simplify_tolerance_meters,
-                    preserve_topology=True,
-                )
-
             records.append(
                 {
                     "contour_id": contour_id,
@@ -103,7 +97,21 @@ class ShorelineVectorizer:
                 }
             )
 
-        logger.info(f"Filtering complete. {len(records)} valid geometries remain before top-k filtering.")
+        logger.info(
+            f"Filtering complete. {len(records)} valid geometries remain before top-k filtering."
+        )
+
+        gdf = gpd.GeoDataFrame(records, geometry="geometry", crs=self.crs)
+
+        if self.keep_top_k is not None and self.keep_top_k > 0:
+            gdf = (
+                gdf.sort_values("length", ascending=False)
+                .head(self.keep_top_k)
+                .reset_index(drop=True)
+            )
+            gdf["rank"] = range(1, len(gdf) + 1)
+
+        logger.info(f"Final shoreline output contains {len(gdf)} geometries before simplification.")
 
         gdf = gpd.GeoDataFrame(records, geometry="geometry", crs=self.crs)
 
@@ -116,6 +124,50 @@ class ShorelineVectorizer:
             gdf["rank"] = range(1, len(gdf) + 1)
 
         logger.info(f"Final shoreline output contains {len(gdf)} geometries.")
+
+        if self.simplify_tolerance_meters > 0 and len(gdf) > 0:
+            logger.info(
+                f"Simplifying final shoreline geometries with "
+                f"{self.simplify_tolerance_meters} meters tolerance..."
+            )
+
+            if gdf.crs is None:
+                logger.warning(
+                    "Source CRS is undefined. Cannot safely simplify in meters. "
+                    "Skipping simplification."
+                )
+            else:
+                try:
+                    metric_crs = gdf.estimate_utm_crs()
+
+                    if metric_crs is None:
+                        logger.warning(
+                            "Could not estimate a suitable metric CRS. "
+                            "Skipping simplification."
+                        )
+                    else:
+                        logger.info(f"Using metric CRS for simplification: {metric_crs}")
+
+                        original_crs = gdf.crs
+                        gdf_metric = gdf.to_crs(metric_crs)
+
+                        gdf_metric["geometry"] = gdf_metric.geometry.simplify(
+                            tolerance=self.simplify_tolerance_meters,
+                            preserve_topology=True,
+                        )
+
+                        gdf_metric["length_simplified_m"] = gdf_metric.geometry.length
+                        gdf_metric["n_vertices_simplified"] = gdf_metric.geometry.apply(
+                            lambda geom: len(geom.coords) if geom is not None and not geom.is_empty else 0
+                        )
+
+                        gdf = gdf_metric.to_crs(original_crs)
+
+                except Exception as exc:
+                    logger.warning(
+                        f"Metric simplification failed: {exc}. "
+                        "Continuing with unsimplified geometries."
+                    )        
 
         os.makedirs(os.path.dirname(output_geojson_path), exist_ok=True)
         gdf.to_file(output_geojson_path, driver="GeoJSON")

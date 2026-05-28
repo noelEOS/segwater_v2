@@ -120,6 +120,12 @@ def main(cfg: DictConfig):
 
     inference_transform = build_inference_transform(cfg)
 
+
+    channel_fill_values = None
+
+    if cfg.inference.data.padding.mode == "training_channel_mean":
+        channel_fill_values = list(cfg.inference.data.padding.channel_fill_values)
+        logger.info(f"[DATA] Using training channel means for padding: {channel_fill_values}")
     
     dataset = InferenceDataset(
         image_path=input_image,
@@ -128,6 +134,7 @@ def main(cfg: DictConfig):
         fill_value=cfg.inference.data.fill_value,
         precision=cfg.inference.data.precision,
         transform=inference_transform,
+        channel_fill_values=channel_fill_values,
     )
     
     logger.info(f"[DATA] Swath fully gridded. Total tiles to process: {len(dataset)}")

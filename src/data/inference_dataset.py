@@ -22,7 +22,8 @@ class InferenceDataset(Dataset):
         buffer_size: int,       
         fill_value: float,      
         precision: str,         
-        transform: Optional[Callable] = None, 
+        transform: Optional[Callable] = None,
+        channel_fill_values: Optional[list[float]] = None,
         ):
         """
         Args:
@@ -31,12 +32,15 @@ class InferenceDataset(Dataset):
             tile_size: The dimension of the 'valid' center crop (e.g., 1024).
             buffer_size: The contextual padding added to all sides (e.g., 128).
                          Total model input size will be (tile_size + 2 * buffer_size).
+            channel_fill_values: A list of fill values for each channel (one for each polarization).
+                                 This is used when the buffer extends beyond the edge of the GeoTIFF.
         """
         self.image_path = image_path
         self.transform = transform
         self.tile_size = tile_size
         self.buffer_size = buffer_size
         self.fill_value = fill_value
+        self.channel_fill_values = channel_fill_values
         self.dtype = np.float32 if precision == "float32" else np.float16
         
         # The full tensor size fed to the RTX 6000 (e.g., 1280x1280)
@@ -82,16 +86,65 @@ class InferenceDataset(Dataset):
         # 4. Read the buffered window from the GeoTIFF
         # We re-open the file per worker to ensure thread safety in PyTorch DataLoaders
         with rasterio.open(self.image_path) as src:
-            window = Window(
-                col_off=window_x0, 
-                row_off=window_y0, 
-                width=self.window_size, 
-                height=self.window_size
-            )
-            # boundless=True is the magic trick here. If the 128px buffer extends past the 
-            # absolute edge of the GeoTIFF, rasterio automatically pads it with fill_value (0).
-            data = src.read(window=window, boundless=True, fill_value=self.fill_value)
-            
+            if self.channel_fill_values is None:
+                window = Window(
+                    col_off=window_x0,
+                    row_off=window_y0,
+                    width=self.window_size,
+                    height=self.window_size,
+                )
+
+                data = src.read(
+                    window=window,
+                    boundless=True,
+                    fill_value=self.fill_value,
+                )
+
+            else:
+                fill_values = np.asarray(self.channel_fill_values, dtype=self.dtype)
+
+                if len(fill_values) != self.num_channels:
+                    raise ValueError(
+                        f"Expected {self.num_channels} channel fill values, "
+                        f"but got {len(fill_values)}."
+                    )
+
+                data = np.empty(
+                    (self.num_channels, self.window_size, self.window_size),
+                    dtype=self.dtype,
+                )
+
+                data[:] = fill_values[:, None, None]
+
+                src_row_start = max(window_y0, 0)
+                src_col_start = max(window_x0, 0)
+                src_row_stop = min(window_y0 + self.window_size, self.height)
+                src_col_stop = min(window_x0 + self.window_size, self.width)
+
+                read_h = src_row_stop - src_row_start
+                read_w = src_col_stop - src_col_start
+
+                if read_h > 0 and read_w > 0:
+                    valid_window = Window(
+                        col_off=src_col_start,
+                        row_off=src_row_start,
+                        width=read_w,
+                        height=read_h,
+                    )
+
+                    real_data = src.read(window=valid_window).astype(self.dtype)
+
+                    dst_row_start = src_row_start - window_y0
+                    dst_col_start = src_col_start - window_x0
+                    dst_row_stop = dst_row_start + read_h
+                    dst_col_stop = dst_col_start + read_w
+
+                    data[
+                        :,
+                        dst_row_start:dst_row_stop,
+                        dst_col_start:dst_col_stop,
+                    ] = real_data
+                    
         data = data.astype(self.dtype)
 
         # 5. Apply normalizations

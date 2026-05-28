@@ -22,6 +22,11 @@ inference:
       method: "standardize_db"
       means: [-15.510920639155525, -23.57375764750785]
       stds: [6.564080466988128, 7.6567358472184]
+    padding:
+      mode: "training_channel_mean"
+      channel_fill_values:
+        - -15.510920639155525
+        - -23.57375764750785
 
   # --- Output Destinations ---
   output:

@@ -13,8 +13,24 @@ inference:
     input_image: "data/raw/sentinel1_swath.tif"
     batch_size: 8
     num_workers: 4
+
+    # Tiling geometry is now explicit:
+    #   tile_size   = valid center crop written/blended into the final probability map
+    #   buffer_size = context added on each side before model inference
+    #   stride      = spacing between valid crop origins
+    #
+    # Model input size = tile_size + 2 * buffer_size.
+    # Current large-tile mode: 1024 + 2*128 = 1280.
+    # Native 224 mode example: tile_size=160, buffer_size=32, stride=80.
     tile_size: 1024
     buffer_size: 128
+    stride: 512
+
+    # shift_inward avoids tiny final sliver tiles such as a 128-pixel final strip
+    # being inferred from a model input dominated by padding.
+    # allow_sliver preserves the older behavior.
+    edge_policy: "shift_inward"
+
     fill_value: 0.0          # Fallback scalar NoData padding for edge tiles.
     precision: "float32"     # Options: "float32" or "float16"
     normalization:
@@ -29,6 +45,16 @@ inference:
       channel_fill_values:
         - -15.510920639155525
         - -23.57375764750785
+
+  # --- Probability Map Stitching ---
+  stitching:
+    # crop_only: previous direct-write behavior. If shifted edge tiles overlap,
+    #            later tiles overwrite earlier pixels.
+    # weighted_blend: high-quality mode. Overlapping valid zones are blended
+    #                 with a tapered weight window and normalized at close time.
+    mode: "weighted_blend"
+    blend_window: "hann"      # Options: "hann", "linear", "constant"
+    min_weight: 0.001         # Avoid zero-weight pixels at true image boundaries.
 
   # --- Output Organization & Provenance ---
   output:

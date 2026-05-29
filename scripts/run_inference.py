@@ -58,6 +58,11 @@ def build_channel_fill_values(cfg):
     return None
 
 
+def _get_optional_cfg(cfg_node, key, default):
+    """Safely read optional Hydra/OmegaConf keys while preserving old configs."""
+    return cfg_node[key] if key in cfg_node else default
+
+
 @hydra.main(version_base="1.3", config_path="../configs", config_name="inference")
 def main(cfg: DictConfig):
     start_time = time.time()
@@ -145,6 +150,9 @@ def main(cfg: DictConfig):
     if channel_fill_values is not None:
         logger.info(f"[DATA] Using training channel means for padding: {channel_fill_values}")
 
+    stride = _get_optional_cfg(cfg.inference.data, "stride", cfg.inference.data.tile_size)
+    edge_policy = _get_optional_cfg(cfg.inference.data, "edge_policy", "shift_inward")
+
     dataset = InferenceDataset(
         image_path=input_image,
         tile_size=cfg.inference.data.tile_size,
@@ -153,6 +161,8 @@ def main(cfg: DictConfig):
         precision=cfg.inference.data.precision,
         transform=inference_transform,
         channel_fill_values=channel_fill_values,
+        stride=stride,
+        edge_policy=edge_policy,
     )
 
     logger.info(f"[DATA] Swath fully gridded. Total tiles to process: {len(dataset)}")
@@ -172,10 +182,18 @@ def main(cfg: DictConfig):
     logger.info("--- STAGE 4: PROBABILITY STITCHER SETUP ---")
     global_shape = (dataset.height, dataset.width)
 
+    stitching_cfg = _get_optional_cfg(cfg.inference, "stitching", {})
+    stitching_mode = _get_optional_cfg(stitching_cfg, "mode", "crop_only")
+    blend_window = _get_optional_cfg(stitching_cfg, "blend_window", "hann")
+    min_weight = _get_optional_cfg(stitching_cfg, "min_weight", 1e-3)
+
     stitcher = ProbabilityStitcher(
         output_path=str(paths.probability_memmap),
         shape=global_shape,
         precision=cfg.inference.data.precision,
+        mode=stitching_mode,
+        blend_window=blend_window,
+        min_weight=min_weight,
     )
     logger.info(f"[STITCHER] Canvas allocated at {paths.probability_memmap}")
 

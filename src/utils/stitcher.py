@@ -102,6 +102,7 @@ class ProbabilityStitcher:
         self.mode = mode
         self.blend_window = blend_window
         self.min_weight = float(min_weight)
+        self._weight_cache: dict[tuple[int, int], np.ndarray] = {}
 
         if self.mode not in {"crop_only", "weighted_blend"}:
             raise ValueError(
@@ -109,7 +110,9 @@ class ProbabilityStitcher:
                 "Expected 'crop_only' or 'weighted_blend'."
             )
 
-        os.makedirs(os.path.dirname(self.output_path), exist_ok=True)
+        output_dir = os.path.dirname(self.output_path)
+        if output_dir:
+            os.makedirs(output_dir, exist_ok=True)
 
         # The final probability canvas. 'w+' creates or overwrites cleanly.
         self.memmap = np.memmap(
@@ -153,6 +156,17 @@ class ProbabilityStitcher:
         value = metadata[key][index]
         return int(value.item() if hasattr(value, "item") else value)
 
+    def _get_weights(self, height: int, width: int) -> np.ndarray:
+        key = (height, width)
+        if key not in self._weight_cache:
+            self._weight_cache[key] = make_blend_weight_2d(
+                height,
+                width,
+                window=self.blend_window,
+                min_weight=self.min_weight,
+            )
+        return self._weight_cache[key]
+
     def add_batch(self, batch_probs: torch.Tensor, metadata: Dict[str, torch.Tensor]):
         """
         Crop buffered predictions and add valid regions to the global canvas.
@@ -183,12 +197,7 @@ class ProbabilityStitcher:
             if self.mode == "crop_only":
                 self.memmap[y0:y0 + h, x0:x0 + w] = crop_prob.astype(self.dtype, copy=False)
             else:
-                weights = make_blend_weight_2d(
-                    h,
-                    w,
-                    window=self.blend_window,
-                    min_weight=self.min_weight,
-                )
+                weights = self._get_weights(h, w)
                 self.sum_memmap[y0:y0 + h, x0:x0 + w] += crop_prob.astype(np.float32) * weights
                 self.weight_memmap[y0:y0 + h, x0:x0 + w] += weights
 

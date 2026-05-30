@@ -1,0 +1,63 @@
+# configs/inference_sweep.yaml
+#
+# Lightweight development sweep for running one or more scenes through multiple
+# checkpoints and inference-tiling presets. The sweep runner expands this file
+# into repeated calls to scripts/run_inference.py.
+
+sweep:
+  name: "dev_tiling_sweep"
+  dry_run: false
+  continue_on_error: true
+
+  # Use either input_images or input_dir + input_glob.
+  input_images:
+    - "/home/noel/s1/S1_20231008_110652_25_1_4.tif"
+
+  # input_dir: "/home/noel/s1"
+  # input_glob: "*.tif"
+
+  # Overrides applied to every run in the sweep.
+  common_overrides:
+    inference.post_processing.smoothing.apply_simplification: true
+    inference.post_processing.smoothing.simplify_tolerance_meters: 1.0
+    inference.post_processing.filtering.apply_length_filter: true
+    inference.post_processing.filtering.min_length_meters: 10000.0
+    inference.data.edge_policy: "shift_inward"
+    inference.stitching.min_weight: 0.001
+
+  checkpoints:
+    - name: "unet_resnet50"
+      checkpoint_path: "/home/noel/unet_resnet50/unet_resnet50_s42_step39600_miou0.9379.pth"
+      model:
+        arch: "unet"
+        encoder_name: "resnet50"
+
+    - name: "upernet_swin_base_224"
+      checkpoint_path: "outputs/stage2/upernet_tu-swin_base_patch4_window7_224/00-52-13_s42/upernet_tu-swin_base_patch4_window7_224_s42_step40340_miou0.9499.pth"
+      model:
+        arch: "upernet"
+        encoder_name: "tu-swin_base_patch4_window7_224"
+
+  presets:
+    - name: "large_crop_only_1024_b128_s1024"
+      overrides:
+        inference.data.tile_size: 1024
+        inference.data.buffer_size: 128
+        inference.data.stride: 1024
+        inference.stitching.mode: "crop_only"
+
+    - name: "large_weighted_1024_b128_s512"
+      overrides:
+        inference.data.tile_size: 1024
+        inference.data.buffer_size: 128
+        inference.data.stride: 512
+        inference.stitching.mode: "weighted_blend"
+        inference.stitching.blend_window: "hann"
+
+    - name: "native224_weighted_224_b0_s112"
+      overrides:
+        inference.data.tile_size: 224
+        inference.data.buffer_size: 0
+        inference.data.stride: 112
+        inference.stitching.mode: "weighted_blend"
+        inference.stitching.blend_window: "hann"

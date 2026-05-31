@@ -19,12 +19,14 @@ from src.utils.inference_outputs import (
     get_git_commit,
     prepare_output_paths,
     read_raster_metadata,
+    sanitize_for_path,
     utc_now_iso,
     write_json,
     write_run_config_once,
 )
 from src.utils.raster_export import memmap_to_geotiff, write_binary_mask_geotiff
 from src.utils.stitcher import ProbabilityStitcher
+from src.utils.tta import predict_once, predict_with_tta, validate_tta_transforms
 from src.utils.vectorizer import ShorelineVectorizer
 
 logger = logging.getLogger(__name__)
@@ -61,6 +63,34 @@ def build_channel_fill_values(cfg):
 def _get_optional_cfg(cfg_node, key, default):
     """Safely read optional Hydra/OmegaConf keys while preserving old configs."""
     return cfg_node[key] if key in cfg_node else default
+
+
+def _build_stitcher(paths, global_shape, cfg, stitching_mode, blend_window, min_weight):
+    return ProbabilityStitcher(
+        output_path=str(paths.probability_memmap),
+        shape=global_shape,
+        precision=cfg.inference.data.precision,
+        mode=stitching_mode,
+        blend_window=blend_window,
+        min_weight=min_weight,
+    )
+
+
+def _build_tta_debug_stitchers(paths, global_shape, cfg, transforms, stitching_mode, blend_window, min_weight):
+    """Create one stitcher per inverse-transformed TTA view for QGIS inspection."""
+    stitchers = {}
+    for transform in transforms:
+        safe_transform = sanitize_for_path(transform)
+        output_path = paths.scene_dir / f"{paths.scene_id}_probability_water_tta_{safe_transform}.memmap"
+        stitchers[transform] = ProbabilityStitcher(
+            output_path=str(output_path),
+            shape=global_shape,
+            precision=cfg.inference.data.precision,
+            mode=stitching_mode,
+            blend_window=blend_window,
+            min_weight=min_weight,
+        )
+    return stitchers
 
 
 @hydra.main(version_base="1.3", config_path="../configs", config_name="inference")
@@ -187,15 +217,31 @@ def main(cfg: DictConfig):
     blend_window = _get_optional_cfg(stitching_cfg, "blend_window", "hann")
     min_weight = _get_optional_cfg(stitching_cfg, "min_weight", 1e-3)
 
-    stitcher = ProbabilityStitcher(
-        output_path=str(paths.probability_memmap),
-        shape=global_shape,
-        precision=cfg.inference.data.precision,
-        mode=stitching_mode,
-        blend_window=blend_window,
-        min_weight=min_weight,
-    )
+    stitcher = _build_stitcher(paths, global_shape, cfg, stitching_mode, blend_window, min_weight)
     logger.info(f"[STITCHER] Canvas allocated at {paths.probability_memmap}")
+
+    tta_cfg = _get_optional_cfg(cfg.inference, "tta", {})
+    tta_enabled = bool(_get_optional_cfg(tta_cfg, "enabled", False))
+    tta_transforms = list(_get_optional_cfg(tta_cfg, "transforms", ["identity"]))
+    tta_save_individual = bool(_get_optional_cfg(tta_cfg, "save_individual_probability_geotiffs", False))
+    tta_debug_stitchers = {}
+
+    if tta_enabled:
+        tta_transforms = validate_tta_transforms(tta_transforms)
+        logger.info(f"[TTA] Enabled with transforms: {tta_transforms}")
+        if tta_save_individual:
+            tta_debug_stitchers = _build_tta_debug_stitchers(
+                paths,
+                global_shape,
+                cfg,
+                tta_transforms,
+                stitching_mode,
+                blend_window,
+                min_weight,
+            )
+            logger.info("[TTA] Individual inverse-transformed probability GeoTIFF export enabled.")
+    else:
+        logger.info("[TTA] Disabled.")
 
     # ---------------------------------------------------------
     # 5. Inference Engine Loop
@@ -211,14 +257,22 @@ def main(cfg: DictConfig):
             images = images.to(device)
 
             with torch.autocast(device_type=device.type, dtype=amp_dtype):
-                logits = model(images)
-
-                if cfg.model.num_classes == 1:
-                    probs = torch.sigmoid(logits).squeeze(1)
+                if tta_enabled:
+                    probs, individual_tta_probs = predict_with_tta(
+                        model=model,
+                        images=images,
+                        num_classes=cfg.model.num_classes,
+                        transforms=tta_transforms,
+                        return_individual=tta_save_individual,
+                    )
                 else:
-                    probs = torch.softmax(logits, dim=1)[:, 1, :, :]
+                    probs = predict_once(model, images, num_classes=cfg.model.num_classes)
+                    individual_tta_probs = {}
 
             stitcher.add_batch(probs, metadata)
+
+            for transform, transform_probs in individual_tta_probs.items():
+                tta_debug_stitchers[transform].add_batch(transform_probs, metadata)
 
             if (batch_idx + 1) % 25 == 0 or (batch_idx + 1) == total_batches:
                 logger.info(f"[INFERENCE] Successfully processed {batch_idx + 1}/{total_batches} batches.")
@@ -231,6 +285,10 @@ def main(cfg: DictConfig):
     logger.info("--- STAGE 6: DISK FLUSH & PRODUCT EXPORT ---")
     logger.info("[STITCHER] Initiating forced flush to write remaining memory buffer to disk...")
     stitcher.close()
+
+    tta_probability_geotiff_paths = {}
+    for transform, transform_stitcher in tta_debug_stitchers.items():
+        transform_stitcher.close()
 
     geotiff_tags = build_geotiff_tags(
         cfg=cfg,
@@ -253,6 +311,33 @@ def main(cfg: DictConfig):
             tags=geotiff_tags,
         )
         logger.info(f"[OUTPUT] Probability GeoTIFF saved to: {probability_geotiff_path}")
+
+    if tta_save_individual:
+        for transform in tta_debug_stitchers:
+            safe_transform = sanitize_for_path(transform)
+            memmap_path = paths.scene_dir / f"{paths.scene_id}_probability_water_tta_{safe_transform}.memmap"
+            geotiff_path = paths.scene_dir / f"{paths.scene_id}_probability_water_tta_{safe_transform}.tif"
+            tta_tags = build_geotiff_tags(
+                cfg=cfg,
+                scene_id=paths.scene_id,
+                run_id=paths.run_id,
+                product=f"water_probability_tta_{safe_transform}",
+                created_utc=created_utc,
+                git_commit=git_commit,
+            )
+            tta_probability_geotiff_paths[transform] = memmap_to_geotiff(
+                memmap_path=memmap_path,
+                reference_tif_path=input_image,
+                output_tif_path=geotiff_path,
+                shape=global_shape,
+                precision=cfg.inference.data.precision,
+                band_description=f"water_probability_tta_{safe_transform}",
+                tags=tta_tags,
+            )
+            logger.info(
+                f"[TTA] Individual probability GeoTIFF for {transform} saved to: "
+                f"{tta_probability_geotiff_paths[transform]}"
+            )
 
     binary_mask_path = None
     if cfg.inference.output.save_binary_mask_geotiff:
@@ -332,6 +417,7 @@ def main(cfg: DictConfig):
         elapsed_minutes=elapsed,
         git_commit=git_commit,
     )
+    scene_metadata["tta_probability_geotiffs"] = tta_probability_geotiff_paths
     write_json(paths.scene_metadata, scene_metadata)
     logger.info(f"[OUTPUT] Scene metadata saved to: {paths.scene_metadata}")
 
@@ -358,6 +444,8 @@ def main(cfg: DictConfig):
     logger.info(f"🧠 Probability memmap available at: {paths.probability_memmap}")
     if probability_geotiff_path:
         logger.info(f"🗺️ Probability GeoTIFF available at: {probability_geotiff_path}")
+    for transform, path in tta_probability_geotiff_paths.items():
+        logger.info(f"🧪 TTA {transform} probability GeoTIFF available at: {path}")
     if binary_mask_path:
         logger.info(f"🎭 Binary mask GeoTIFF available at: {binary_mask_path}")
     if shoreline_path:

@@ -56,6 +56,23 @@ inference:
     blend_window: "hann"      # Options: "hann", "linear", "constant"
     min_weight: 0.001         # Avoid zero-weight pixels at true image boundaries.
 
+  # --- Test-Time Augmentation ---
+  tta:
+    # Disabled by default because it multiplies inference cost by the number of
+    # transforms. Enable for high-quality/development experiments.
+    enabled: false
+    transforms:
+      - "identity"
+      - "hflip"
+      - "vflip"
+      - "hvflip"
+    merge: "mean"
+
+    # Development/QGIS inspection option. When enabled, each inverse-transformed
+    # TTA probability map is stitched into a full-scene GeoTIFF in addition to
+    # the final TTA-mean probability product.
+    save_individual_probability_geotiffs: false
+
   # --- Output Organization & Provenance ---
   output:
     # Outputs are written as:

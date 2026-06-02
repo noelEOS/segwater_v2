@@ -8,9 +8,22 @@ inference:
   device: "cuda"
   checkpoint_path: "outputs/checkpoints/best_model.pth"
 
+  # When processing multiple scenes in one process, continue after a scene-level
+  # failure instead of stopping the whole checkpoint-loaded process.
+  continue_on_error: false
+
   # --- Input Data & Tiling Geometry ---
   data:
+    # Single-scene input. This remains the default path for normal inference.
     input_image: "data/raw/sentinel1_swath.tif"
+
+    # Optional multi-scene inputs. The inference script resolves inputs in this
+    # order: input_list_file, input_images, input_dir, then input_image.
+    input_list_file: null
+    input_images: null
+    input_dir: null
+    input_glob: "*.tif"
+
     batch_size: 8
     num_workers: 4
 

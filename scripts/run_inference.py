@@ -1,5 +1,6 @@
 import logging
 import time
+from pathlib import Path
 
 import hydra
 import numpy as np
@@ -65,73 +66,29 @@ def _get_optional_cfg(cfg_node, key, default):
     return cfg_node[key] if key in cfg_node else default
 
 
-def _build_stitcher(paths, global_shape, cfg, stitching_mode, blend_window, min_weight):
-    return ProbabilityStitcher(
-        output_path=str(paths.probability_memmap),
-        shape=global_shape,
-        precision=cfg.inference.data.precision,
-        mode=stitching_mode,
-        blend_window=blend_window,
-        min_weight=min_weight,
-    )
+def resolve_input_images(cfg) -> list[str]:
+    """Resolve one or more input images for a single checkpoint-loaded process."""
+    data_cfg = cfg.inference.data
+
+    input_list_file = _get_optional_cfg(data_cfg, "input_list_file", None)
+    if input_list_file:
+        path = Path(str(input_list_file))
+        images = [line.strip() for line in path.read_text(encoding="utf-8").splitlines()]
+        return [image for image in images if image and not image.startswith("#")]
+
+    input_images = _get_optional_cfg(data_cfg, "input_images", None)
+    if input_images:
+        return [str(image) for image in input_images]
+
+    input_dir = _get_optional_cfg(data_cfg, "input_dir", None)
+    if input_dir:
+        input_glob = _get_optional_cfg(data_cfg, "input_glob", "*.tif")
+        return sorted(str(path) for path in Path(str(input_dir)).glob(str(input_glob)))
+
+    return [str(data_cfg.input_image)]
 
 
-def _build_tta_debug_stitchers(paths, global_shape, cfg, transforms, stitching_mode, blend_window, min_weight):
-    """Create one stitcher per inverse-transformed TTA view for QGIS inspection."""
-    stitchers = {}
-    for transform in transforms:
-        safe_transform = sanitize_for_path(transform)
-        output_path = paths.scene_dir / f"{paths.scene_id}_probability_water_tta_{safe_transform}.memmap"
-        stitchers[transform] = ProbabilityStitcher(
-            output_path=str(output_path),
-            shape=global_shape,
-            precision=cfg.inference.data.precision,
-            mode=stitching_mode,
-            blend_window=blend_window,
-            min_weight=min_weight,
-        )
-    return stitchers
-
-
-@hydra.main(version_base="1.3", config_path="../configs", config_name="inference")
-def main(cfg: DictConfig):
-    start_time = time.time()
-    created_utc = utc_now_iso()
-    git_commit = get_git_commit()
-
-    logger.info("=" * 60)
-    logger.info("🌊 INITIALIZING SEGWATER V2 INFERENCE PIPELINE")
-    logger.info("=" * 60)
-    logger.info(f"[CONFIG] Active Runtime Configuration:\n{OmegaConf.to_yaml(cfg)}")
-
-    paths = prepare_output_paths(cfg)
-    write_run_config_once(cfg, paths.run_config)
-
-    logger.info(f"[OUTPUT] Run ID: {paths.run_id}")
-    logger.info(f"[OUTPUT] Scene ID: {paths.scene_id}")
-    logger.info(f"[OUTPUT] Scene output directory: {paths.scene_dir}")
-
-    # ---------------------------------------------------------
-    # 1. Environment & Hardware Setup
-    # ---------------------------------------------------------
-    logger.info("--- STAGE 1: HARDWARE INITIALIZATION ---")
-    device = torch.device(cfg.inference.device if torch.cuda.is_available() else "cpu")
-    logger.info(f"[ENV] Target Device: {device}")
-
-    gpu_name = None
-    vram_gb = None
-
-    if device.type == "cuda":
-        gpu_name = torch.cuda.get_device_name(0)
-        vram_gb = torch.cuda.get_device_properties(0).total_memory / 1e9
-        logger.info(f"[ENV] Detected GPU: {gpu_name} ({vram_gb:.2f} GB VRAM)")
-        torch.backends.cudnn.benchmark = True
-        logger.info("[ENV] cuDNN benchmarking enabled for static graph optimization.")
-
-    # ---------------------------------------------------------
-    # 2. Model & Checkpoint Loading
-    # ---------------------------------------------------------
-    logger.info("--- STAGE 2: MODEL INSTANTIATION ---")
+def build_model_and_load_checkpoint(cfg, device):
     arch = cfg.model.arch
     encoder = cfg.model.encoder_name
     in_channels = cfg.model.in_channels
@@ -148,7 +105,7 @@ def main(cfg: DictConfig):
     )
 
     ckpt_path = cfg.inference.checkpoint_path
-    logger.info("[MODEL] Loading state dictionary into VRAM...")
+    logger.info(f"[MODEL] Loading state dictionary into VRAM: {ckpt_path}")
     checkpoint = torch.load(str(ckpt_path), map_location="cpu")
 
     if "model_state_dict" in checkpoint:
@@ -167,13 +124,65 @@ def main(cfg: DictConfig):
     model.eval()
     logger.info("[MODEL] Checkpoint successfully loaded and model set to eval() mode.")
 
+    return model, saved_step, saved_miou
+
+
+def _build_stitcher(output_path, global_shape, cfg, stitching_mode, blend_window, min_weight):
+    return ProbabilityStitcher(
+        output_path=str(output_path),
+        shape=global_shape,
+        precision=cfg.inference.data.precision,
+        mode=stitching_mode,
+        blend_window=blend_window,
+        min_weight=min_weight,
+    )
+
+
+def _build_tta_debug_stitchers(paths, global_shape, cfg, transforms, stitching_mode, blend_window, min_weight):
+    """Create one stitcher per inverse-transformed TTA view for QGIS inspection."""
+    stitchers = {}
+    for transform in transforms:
+        safe_transform = sanitize_for_path(transform)
+        output_path = paths.scene_dir / f"{paths.scene_id}_probability_water_tta_{safe_transform}.memmap"
+        stitchers[transform] = _build_stitcher(
+            output_path=output_path,
+            global_shape=global_shape,
+            cfg=cfg,
+            stitching_mode=stitching_mode,
+            blend_window=blend_window,
+            min_weight=min_weight,
+        )
+    return stitchers
+
+
+def process_scene(
+    cfg: DictConfig,
+    input_image: str,
+    model: torch.nn.Module,
+    device: torch.device,
+    gpu_name: str | None,
+    vram_gb: float | None,
+    saved_step,
+    saved_miou,
+    git_commit: str | None,
+):
+    scene_start_time = time.time()
+    created_utc = utc_now_iso()
+
+    cfg.inference.data.input_image = str(input_image)
+    paths = prepare_output_paths(cfg)
+    write_run_config_once(cfg, paths.run_config)
+
+    logger.info("=" * 60)
+    logger.info(f"[SCENE] Processing: {input_image}")
+    logger.info(f"[OUTPUT] Run ID: {paths.run_id}")
+    logger.info(f"[OUTPUT] Scene ID: {paths.scene_id}")
+    logger.info(f"[OUTPUT] Scene output directory: {paths.scene_dir}")
+
     # ---------------------------------------------------------
     # 3. Data & DataLoader Setup
     # ---------------------------------------------------------
     logger.info("--- STAGE 3: DATA PIPELINE SETUP ---")
-    input_image = cfg.inference.data.input_image
-    logger.info(f"[DATA] Mounting SAR Swath: {input_image}")
-
     inference_transform = build_inference_transform(cfg)
     channel_fill_values = build_channel_fill_values(cfg)
 
@@ -217,7 +226,14 @@ def main(cfg: DictConfig):
     blend_window = _get_optional_cfg(stitching_cfg, "blend_window", "hann")
     min_weight = _get_optional_cfg(stitching_cfg, "min_weight", 1e-3)
 
-    stitcher = _build_stitcher(paths, global_shape, cfg, stitching_mode, blend_window, min_weight)
+    stitcher = _build_stitcher(
+        output_path=paths.probability_memmap,
+        global_shape=global_shape,
+        cfg=cfg,
+        stitching_mode=stitching_mode,
+        blend_window=blend_window,
+        min_weight=min_weight,
+    )
     logger.info(f"[STITCHER] Canvas allocated at {paths.probability_memmap}")
 
     tta_cfg = _get_optional_cfg(cfg.inference, "tta", {})
@@ -253,7 +269,7 @@ def main(cfg: DictConfig):
     total_batches = len(dataloader)
 
     with torch.no_grad():
-        for batch_idx, (images, metadata) in enumerate(tqdm(dataloader, desc="Inference Progress")):
+        for batch_idx, (images, metadata) in enumerate(tqdm(dataloader, desc=f"Inference {paths.scene_id}")):
             images = images.to(device)
 
             with torch.autocast(device_type=device.type, dtype=amp_dtype):
@@ -283,7 +299,6 @@ def main(cfg: DictConfig):
     # 6. Finalization, Product Export & Vectorization
     # ---------------------------------------------------------
     logger.info("--- STAGE 6: DISK FLUSH & PRODUCT EXPORT ---")
-    logger.info("[STITCHER] Initiating forced flush to write remaining memory buffer to disk...")
     stitcher.close()
 
     tta_probability_geotiff_paths = {}
@@ -387,9 +402,7 @@ def main(cfg: DictConfig):
             keep_top_k=cfg.inference.post_processing.filtering.keep_top_k,
         )
 
-        shoreline_path = vectorizer.extract_and_save(
-            output_geojson_path=str(paths.shoreline_geojson)
-        )
+        shoreline_path = vectorizer.extract_and_save(output_geojson_path=str(paths.shoreline_geojson))
         logger.info(f"[POST-PROC] Shoreline vector output available at: {shoreline_path}")
     else:
         logger.info("[POST-PROC] Shoreline extraction bypassed via configuration.")
@@ -397,7 +410,7 @@ def main(cfg: DictConfig):
     # ---------------------------------------------------------
     # 7. Provenance Records
     # ---------------------------------------------------------
-    elapsed = (time.time() - start_time) / 60
+    elapsed = (time.time() - scene_start_time) / 60
     raster_metadata = read_raster_metadata(input_image)
 
     scene_metadata = build_scene_metadata(
@@ -439,7 +452,7 @@ def main(cfg: DictConfig):
     write_json(paths.run_summary, run_summary)
 
     logger.info("=" * 60)
-    logger.info(f"✅ SEGWATER V2 INFERENCE SUCCESSFUL in {elapsed:.2f} minutes.")
+    logger.info(f"✅ SCENE INFERENCE SUCCESSFUL in {elapsed:.2f} minutes.")
     logger.info(f"📁 Scene output directory: {paths.scene_dir}")
     logger.info(f"🧠 Probability memmap available at: {paths.probability_memmap}")
     if probability_geotiff_path:
@@ -452,6 +465,81 @@ def main(cfg: DictConfig):
         logger.info(f"🌊 Shoreline vector available at: {shoreline_path}")
     logger.info(f"🧾 Metadata available at: {paths.scene_metadata}")
     logger.info("=" * 60)
+
+
+@hydra.main(version_base="1.3", config_path="../configs", config_name="inference")
+def main(cfg: DictConfig):
+    pipeline_start_time = time.time()
+    git_commit = get_git_commit()
+
+    logger.info("=" * 60)
+    logger.info("🌊 INITIALIZING SEGWATER V2 INFERENCE PIPELINE")
+    logger.info("=" * 60)
+    logger.info(f"[CONFIG] Active Runtime Configuration:\n{OmegaConf.to_yaml(cfg)}")
+
+    input_images = resolve_input_images(cfg)
+    if not input_images:
+        raise ValueError("No input images were resolved for inference.")
+
+    logger.info(f"[DATA] Resolved {len(input_images)} input scene(s).")
+
+    # ---------------------------------------------------------
+    # 1. Environment & Hardware Setup
+    # ---------------------------------------------------------
+    logger.info("--- STAGE 1: HARDWARE INITIALIZATION ---")
+    device = torch.device(cfg.inference.device if torch.cuda.is_available() else "cpu")
+    logger.info(f"[ENV] Target Device: {device}")
+
+    gpu_name = None
+    vram_gb = None
+
+    if device.type == "cuda":
+        gpu_name = torch.cuda.get_device_name(0)
+        vram_gb = torch.cuda.get_device_properties(0).total_memory / 1e9
+        logger.info(f"[ENV] Detected GPU: {gpu_name} ({vram_gb:.2f} GB VRAM)")
+        torch.backends.cudnn.benchmark = True
+        logger.info("[ENV] cuDNN benchmarking enabled for static graph optimization.")
+
+    # ---------------------------------------------------------
+    # 2. Model & Checkpoint Loading -- done once per process.
+    # ---------------------------------------------------------
+    logger.info("--- STAGE 2: MODEL INSTANTIATION ---")
+    model, saved_step, saved_miou = build_model_and_load_checkpoint(cfg, device)
+
+    successful = 0
+    failed = 0
+
+    for scene_index, input_image in enumerate(input_images, start=1):
+        logger.info(f"[BATCH] Starting scene {scene_index}/{len(input_images)}")
+        try:
+            process_scene(
+                cfg=cfg,
+                input_image=input_image,
+                model=model,
+                device=device,
+                gpu_name=gpu_name,
+                vram_gb=vram_gb,
+                saved_step=saved_step,
+                saved_miou=saved_miou,
+                git_commit=git_commit,
+            )
+            successful += 1
+        except Exception as exc:
+            failed += 1
+            logger.exception(f"[BATCH] Scene failed: {input_image} | Error: {exc}")
+            if not bool(_get_optional_cfg(cfg.inference, "continue_on_error", False)):
+                raise
+
+    elapsed = (time.time() - pipeline_start_time) / 60
+    logger.info("=" * 60)
+    logger.info(
+        f"✅ SEGWATER V2 INFERENCE PROCESS COMPLETE in {elapsed:.2f} minutes. "
+        f"Successful scenes: {successful} | Failed scenes: {failed}"
+    )
+    logger.info("=" * 60)
+
+    if failed > 0:
+        raise SystemExit(1)
 
 
 if __name__ == "__main__":

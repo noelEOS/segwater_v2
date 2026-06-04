@@ -1,0 +1,64 @@
+# configs/evaluation/indonesia_s1_s2_bootstrap_semarang.yaml
+#
+# Pixel-level bootstrap accuracy assessment for Indonesia/Semarang S1 model
+# predictions against concurrent S2-derived reference masks.
+#
+# Run with:
+#   python scripts/evaluate_indonesia_s1_s2_bootstrap.py \
+#     configs/evaluation/indonesia_s1_s2_bootstrap_semarang.yaml
+
+evaluation:
+  name: "semarang_s1_s2_bootstrap_gshhg_gsw"
+
+  # Valid evaluation mask. Only pixels equal to valid_mask_value are evaluated.
+  # This is the Semarang combined GSHHG + Global Surface Water mask.
+  valid_mask_path: "/Users/noel/Documents/VisualStudio/projects/sen12coast_global_dl/INDONESIA/results/S1_S2_Accuracy_Assessment/GSHHG_GlobalSurfaceWater_combined_mask.tif"
+  valid_mask_value: 1
+
+  # Pixel-level bootstrap settings.
+  sample_size: 400
+  n_bootstraps: 1000
+  seed: 42
+
+  # Fail early if S2 reference, S1 prediction, and valid mask are not aligned.
+  check_alignment: true
+
+  # Binary class interpretation.
+  # These values are converted to water=1; all other valid values become land=0.
+  reference_water_values: [1]
+  prediction_water_values: [1]
+
+  # Ignore NoData/invalid pixels after applying the valid mask.
+  # S2-derived reference masks commonly use 255 for invalid pixels.
+  reference_nodata_values: [255]
+  prediction_nodata_values: null
+
+  file_pairs:
+    - name: "PAIR_1"
+      s2_reference_path: "/Users/noel/Documents/VisualStudio/projects/sen12coast_global_dl/INDONESIA/results/S1_S2_Accuracy_Assessment/Semarang_Concurrent_s1_s2/mndwi/mndwi_land_water_mask_clipped/S2_20190623_030000_concurrent_S1_20190622_221715_76_8_9_mndwi_land_water_mask.tif"
+      s1_prediction_path: "/Users/noel/Documents/VisualStudio/projects/sen12coast_global_dl/INDONESIA/results/Sen12Coast_Indonesia_Semarang_unet_from_pretrained_finetuned_SAYUNG_whole_TS/S1_20190622_221715_76_8_9_Unet_Water_Land_Mask.tif"
+
+    - name: "PAIR_2"
+      s2_reference_path: "/Users/noel/Documents/VisualStudio/projects/sen12coast_global_dl/INDONESIA/results/S1_S2_Accuracy_Assessment/Semarang_Concurrent_s1_s2/mndwi/mndwi_land_water_mask_clipped/S2_20191021_025953_concurrent_S1_20191020_221720_76_8_9_mndwi_land_water_mask.tif"
+      s1_prediction_path: "/Users/noel/Documents/VisualStudio/projects/sen12coast_global_dl/INDONESIA/results/Sen12Coast_Indonesia_Semarang_unet_from_pretrained_finetuned_SAYUNG_whole_TS/S1_20191020_221720_76_8_9_Unet_Water_Land_Mask.tif"
+
+    - name: "PAIR_3"
+      s2_reference_path: "/Users/noel/Documents/VisualStudio/projects/sen12coast_global_dl/INDONESIA/results/S1_S2_Accuracy_Assessment/Semarang_Concurrent_s1_s2/mndwi/mndwi_land_water_mask_clipped/S2_20200617_025955_concurrent_S1_20200616_221721_76_8_9_mndwi_land_water_mask.tif"
+      s1_prediction_path: "/Users/noel/Documents/VisualStudio/projects/sen12coast_global_dl/INDONESIA/results/Sen12Coast_Indonesia_Semarang_unet_from_pretrained_finetuned_SAYUNG_whole_TS/S1_20200616_221721_76_8_9_Unet_Water_Land_Mask.tif"
+
+    - name: "PAIR_4"
+      s2_reference_path: "/Users/noel/Documents/VisualStudio/projects/sen12coast_global_dl/INDONESIA/results/S1_S2_Accuracy_Assessment/Semarang_Concurrent_s1_s2/mndwi/mndwi_land_water_mask_clipped/S2_20210811_025953_concurrent_S1_20210810_221730_76_8_9_mndwi_land_water_mask.tif"
+      s1_prediction_path: "/Users/noel/Documents/VisualStudio/projects/sen12coast_global_dl/INDONESIA/results/Sen12Coast_Indonesia_Semarang_unet_from_pretrained_finetuned_SAYUNG_whole_TS/S1_20210810_221730_76_8_9_Unet_Water_Land_Mask.tif"
+
+    - name: "PAIR_5"
+      s2_reference_path: "/Users/noel/Documents/VisualStudio/projects/sen12coast_global_dl/INDONESIA/results/S1_S2_Accuracy_Assessment/Semarang_Concurrent_s1_s2/mndwi/mndwi_land_water_mask_clipped/S2_20230801_025957_concurrent_S1_20230731_221741_76_8_9_mndwi_land_water_mask.tif"
+      s1_prediction_path: "/Users/noel/Documents/VisualStudio/projects/sen12coast_global_dl/INDONESIA/results/Sen12Coast_Indonesia_Semarang_unet_from_pretrained_finetuned_SAYUNG_whole_TS/S1_20230731_221741_76_8_9_Unet_Water_Land_Mask.tif"
+
+    - name: "PAIR_6"
+      s2_reference_path: "/Users/noel/Documents/VisualStudio/projects/sen12coast_global_dl/INDONESIA/results/S1_S2_Accuracy_Assessment/Semarang_Concurrent_s1_s2/mndwi/mndwi_land_water_mask_clipped/S2_20240726_025955_concurrent_S1_20240725_221738_76_8_9_mndwi_land_water_mask.tif"
+      s1_prediction_path: "/Users/noel/Documents/VisualStudio/projects/sen12coast_global_dl/INDONESIA/results/Sen12Coast_Indonesia_Semarang_unet_from_pretrained_finetuned_SAYUNG_whole_TS/S1_20240725_221738_76_8_9_Unet_Water_Land_Mask.tif"
+
+output:
+  root: "outputs/evaluation/indonesia_s1_s2_bootstrap"
+  run_name: "semarang_gshhg_gsw_pixel_bootstrap"
+  add_timestamp: true

@@ -1,0 +1,53 @@
+# configs/evaluation/indonesia_model_benchmark_semarang.yaml
+#
+# Deterministic multi-model benchmark for Indonesia/Semarang SegWaterV2
+# predictions against concurrent S2-derived reference masks.
+#
+# Run with:
+#   python scripts/evaluate_indonesia_model_benchmark.py \
+#     configs/evaluation/indonesia_model_benchmark_semarang.yaml
+
+evaluation:
+  name: "semarang_segwater_v2_model_benchmark"
+
+  # Directory containing S2-derived reference masks.
+  reference_dir: "/Volumes/noel_wd_black_sn850x/MACBOOK_AIR_M2_Backup/Downloads/Concurrent_S2_ndwi_mndwi_awei_ndvi"
+  reference_glob: "*.tif"
+
+  # Extracts IDs such as S1_20240725_221738_76_8_9 from the S2 reference filename.
+  s1_id_regex: "(S1_\\d{8}_\\d{6}_\\d+_\\d+_\\d+)"
+
+  # Expected prediction filename inside each model directory.
+  prediction_filename_template: "{s1_id}_mask.tif"
+
+  # Official pipeline behavior: fail if reference and prediction are not aligned.
+  # The notebook used to crop to the minimum shared shape, but this is intentionally
+  # not allowed here.
+  alignment_policy: "fail"
+
+  # Missing predictions are recorded in evaluation_manifest.csv and skipped.
+  # Set to "fail" if every model must contain every prediction.
+  missing_prediction_policy: "record_and_continue"
+
+  # Binary class interpretation.
+  reference_water_values: [1]
+  prediction_water_values: [1]
+
+  # S2 reference masks use 255 for invalid/NoData pixels.
+  reference_nodata_values: [255]
+  prediction_nodata_values: null
+
+  model_dirs:
+    Deeplabv3plus_ResNet34_Whole: "/Volumes/noel_wd_black_sn850x/MACBOOK_AIR_M2_Backup/Downloads/SEGWATER-V2-INFERENCE/deeplabv3plus_resnet34_seed17"
+    SegFormer_ResNet34_Whole: "/Volumes/noel_wd_black_sn850x/MACBOOK_AIR_M2_Backup/Downloads/SEGWATER-V2-INFERENCE/segformer_resnet34_seed17"
+    Unet_Resnet50_Whole: "/Volumes/noel_wd_black_sn850x/MACBOOK_AIR_M2_Backup/Downloads/SEGWATER-V2-INFERENCE/unet_restnet50__seed11"
+    Unet_HighResNet_Whole: "/Volumes/noel_wd_black_sn850x/MACBOOK_AIR_M2_Backup/Downloads/SEGWATER-V2-INFERENCE/unet_tu-hrnet_w48_ssld_seed17"
+    UnetPlus_Resnet34_Whole: "/Volumes/noel_wd_black_sn850x/MACBOOK_AIR_M2_Backup/Downloads/SEGWATER-V2-INFERENCE/unetplusplus_resnet34_seed17"
+    UnetPlus_Resnet50_Whole: "/Volumes/noel_wd_black_sn850x/MACBOOK_AIR_M2_Backup/Downloads/SEGWATER-V2-INFERENCE/unetplusplus_resnet50_seed17"
+    Upernet_ConvnextV2base_Whole: "/Volumes/noel_wd_black_sn850x/MACBOOK_AIR_M2_Backup/Downloads/SEGWATER-V2-INFERENCE/upernet_tu-convnextv2_base_seed11"
+    Upernet_ConvnextV2base_encDep3_Whole: "/Volumes/noel_wd_black_sn850x/MACBOOK_AIR_M2_Backup/Downloads/SEGWATER-V2-INFERENCE/upernet-highres_tu-convnextv2_base_seed17"
+
+output:
+  root: "outputs/evaluation/indonesia_model_benchmark"
+  run_name: "semarang_segwater_v2_model_benchmark"
+  add_timestamp: true

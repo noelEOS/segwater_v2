@@ -146,6 +146,8 @@ def main() -> None:
     seed = int(evaluation.get("seed", 42))
     reference_water_values = list(evaluation.get("reference_water_values", [1]))
     reference_nodata_values = evaluation.get("reference_nodata_values", [255])
+    valid_mask_path = evaluation.get("valid_mask_path", None)
+    valid_mask_value = evaluation.get("valid_mask_value", 1)
     resolution_atol = float(evaluation.get("resolution_atol", 1.0e-12))
 
     prediction_cfg = evaluation["prediction"]
@@ -168,6 +170,7 @@ def main() -> None:
     print(f"Seed: {seed}")
     print("Alignment policy: evaluate_overlap")
     print(f"Probability threshold: {probability_comparison} {probability_threshold}")
+    print(f"External valid mask: {valid_mask_path if valid_mask_path else 'None'}")
 
     started_at = utc_now_iso()
     rng = np.random.default_rng(seed)
@@ -193,6 +196,8 @@ def main() -> None:
             probability_threshold=probability_threshold,
             probability_comparison=probability_comparison,
             resolution_atol=resolution_atol,
+            valid_mask_path=valid_mask_path,
+            valid_mask_value=valid_mask_value,
         )
 
         pair_metadata.append({
@@ -231,6 +236,8 @@ def main() -> None:
         "finished_at": utc_now_iso(),
         "output_dir": str(output_dir),
         "run_dir": run_dir,
+        "valid_mask_path": valid_mask_path,
+        "valid_mask_value": valid_mask_value,
         "sample_size": sample_size,
         "n_bootstraps": n_bootstraps,
         "seed": seed,

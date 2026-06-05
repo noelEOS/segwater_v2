@@ -28,6 +28,11 @@ evaluation:
   alignment_policy: "fail"
   transform_atol: 1.0e-9
 
+  # External evaluation mask. This keeps the binary-mask benchmark consistent
+  # with the GSHHG + Global Surface Water masked bootstrap evaluations.
+  valid_mask_path: "/Users/noel/Documents/VisualStudio/projects/sen12coast_global_dl/INDONESIA/results/S1_S2_Accuracy_Assessment/GSHHG_GlobalSurfaceWater_combined_mask.tif"
+  valid_mask_value: 1
+
   # Missing predictions are recorded in evaluation_manifest.csv and skipped.
   # Set to "fail" if every model must contain every prediction.
   missing_prediction_policy: "record_and_continue"

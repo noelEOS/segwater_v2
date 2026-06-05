@@ -1,0 +1,42 @@
+# configs/evaluation/indonesia_inference_run_benchmark_semarang.yaml
+#
+# Multi-model benchmark for inference run directories that contain per-scene
+# probability maps, evaluated against concurrent S2-derived reference masks.
+#
+# Run with:
+#   python scripts/evaluate_indonesia_inference_run_benchmark.py \
+#     configs/evaluation/indonesia_inference_run_benchmark_semarang.yaml
+
+evaluation:
+  name: "semarang_inference_run_probability_benchmark"
+
+  reference_dir: "/Volumes/noel_wd_black_sn850x/MACBOOK_AIR_M2_Backup/Downloads/Concurrent_S2_ndwi_mndwi_awei_ndvi"
+  reference_glob: "*.tif"
+  s1_id_regex: "(S1_\\d{8}_\\d{6}_\\d+_\\d+_\\d+)"
+
+  # Larger prediction rasters are evaluated only over their true geospatial
+  # overlap with the S2 reference. No cropped TIFFs are saved and no resampling
+  # is performed.
+  alignment_policy: "evaluate_overlap"
+  resolution_atol: 1.0e-12
+
+  reference_water_values: [1]
+  reference_nodata_values: [255]
+
+  prediction:
+    type: "probability"
+    threshold: 0.5
+    comparison: "greater_than"
+    path_template: "{run_dir}/{s1_id}/{s1_id}_probability_water.tif"
+
+  # Add more runs here as you evaluate more models.
+  model_runs:
+    Upernet_ConvnextV2base_native224_weighted:
+      run_dir: "/Volumes/noel_wd_black_sn850x/inference/runs/dev_sweep_all_s1_sanyung_20260603T013102Z_upernet_tu-convnextv2_base_native224_weighted_224_b0_s112"
+
+  missing_prediction_policy: "record_and_continue"
+
+output:
+  root: "outputs/evaluation/indonesia_inference_run_benchmark"
+  run_name: "semarang_probability_gt_0p5_overlap_benchmark"
+  add_timestamp: true

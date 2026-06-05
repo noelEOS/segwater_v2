@@ -50,7 +50,6 @@ def calculate_iou_precision_recall(y_pred: np.ndarray, y_true: np.ndarray) -> di
     true = y_true.flatten().astype(bool)
     intersection = np.logical_and(pred, true).sum()
     union = np.logical_or(pred, true).sum()
-
     if union == 0:
         return {"iou": np.nan, "precision": np.nan, "recall": np.nan}
 
@@ -68,13 +67,27 @@ def apply_validity_filters(
     prediction: np.ndarray,
     reference_nodata_values: list[int | float] | None,
     prediction_nodata_values: list[int | float] | None,
-) -> tuple[np.ndarray, np.ndarray]:
+    external_valid_mask: np.ndarray | None = None,
+    external_valid_value: int | float = 1,
+) -> tuple[np.ndarray, np.ndarray, dict[str, int]]:
     valid_mask = np.ones(reference.shape, dtype=bool)
     if reference_nodata_values:
         valid_mask &= ~np.isin(reference, reference_nodata_values)
     if prediction_nodata_values:
         valid_mask &= ~np.isin(prediction, prediction_nodata_values)
-    return reference[valid_mask], prediction[valid_mask]
+    if external_valid_mask is not None:
+        if external_valid_mask.shape != reference.shape:
+            raise ValueError(
+                f"External valid mask shape mismatch: reference={reference.shape}, valid_mask={external_valid_mask.shape}"
+            )
+        valid_mask &= external_valid_mask == external_valid_value
+
+    diagnostics = {
+        "valid_pixels_after_all_masks": int(valid_mask.sum()),
+        "valid_pixels_after_reference_nodata": int((~np.isin(reference, reference_nodata_values)).sum()) if reference_nodata_values else int(reference.size),
+        "valid_pixels_after_external_mask": int((external_valid_mask == external_valid_value).sum()) if external_valid_mask is not None else int(reference.size),
+    }
+    return reference[valid_mask], prediction[valid_mask], diagnostics
 
 
 def evaluate_pair(
@@ -86,6 +99,8 @@ def evaluate_pair(
     prediction_nodata_values: list[int | float] | None,
     check_alignment: bool,
     transform_atol: float,
+    valid_mask_path: str | None = None,
+    valid_mask_value: int | float = 1,
 ) -> tuple[dict[str, Any], list[dict[str, Any]]]:
     alignment_diagnostics = []
     if check_alignment:
@@ -99,20 +114,24 @@ def evaluate_pair(
             "Official evaluation does not crop rasters."
         )
 
-    reference_valid, prediction_valid = apply_validity_filters(
+    external_valid_mask = load_raster_array(valid_mask_path) if valid_mask_path else None
+    reference_valid, prediction_valid, mask_diagnostics = apply_validity_filters(
         reference,
         prediction,
         reference_nodata_values,
         prediction_nodata_values,
+        external_valid_mask=external_valid_mask,
+        external_valid_value=valid_mask_value,
     )
     if len(reference_valid) == 0:
-        raise ValueError("No valid pixels remain after applying NoData filters.")
+        raise ValueError("No valid pixels remain after applying masks.")
 
     y_true = np.isin(reference_valid, reference_water_values).astype(np.uint8)
     y_pred = np.isin(prediction_valid, prediction_water_values).astype(np.uint8)
     metrics = calculate_iou_precision_recall(y_pred=y_pred, y_true=y_true)
     return {
         **metrics,
+        **mask_diagnostics,
         "valid_pixels": int(len(y_true)),
         "reference_water_pixels": int(y_true.sum()),
         "prediction_water_pixels": int(y_pred.sum()),
@@ -162,6 +181,8 @@ def main() -> None:
     prediction_water_values = list(evaluation.get("prediction_water_values", [1]))
     reference_nodata_values = evaluation.get("reference_nodata_values", [255])
     prediction_nodata_values = evaluation.get("prediction_nodata_values", None)
+    valid_mask_path = evaluation.get("valid_mask_path", None)
+    valid_mask_value = evaluation.get("valid_mask_value", 1)
     transform_atol = float(evaluation.get("transform_atol", 1.0e-9))
 
     alignment_policy = evaluation.get("alignment_policy", "fail")
@@ -184,6 +205,7 @@ def main() -> None:
     print(f"Models: {len(model_dirs)}")
     print("Alignment policy: fail")
     print(f"Transform tolerance: {transform_atol:.12g}")
+    print(f"External valid mask: {valid_mask_path if valid_mask_path else 'None'}")
 
     started_at = utc_now_iso()
     metrics_rows: list[dict[str, Any]] = []
@@ -231,6 +253,8 @@ def main() -> None:
                     prediction_nodata_values,
                     check_alignment,
                     transform_atol,
+                    valid_mask_path=valid_mask_path,
+                    valid_mask_value=valid_mask_value,
                 )
                 metrics_rows.append({
                     "model": model_name,
@@ -271,6 +295,8 @@ def main() -> None:
         "output_dir": str(output_dir),
         "reference_dir": reference_dir,
         "reference_glob": reference_glob,
+        "valid_mask_path": valid_mask_path,
+        "valid_mask_value": valid_mask_value,
         "num_reference_files": len(reference_files),
         "num_models": len(model_dirs),
         "alignment_policy": alignment_policy,

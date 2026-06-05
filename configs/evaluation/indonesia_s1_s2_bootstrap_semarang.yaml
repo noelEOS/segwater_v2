@@ -20,8 +20,11 @@ evaluation:
   n_bootstraps: 1000
   seed: 42
 
-  # Fail early if S2 reference, S1 prediction, and valid mask are not aligned.
+  # Alignment check settings.
+  # Shape and CRS must match exactly. Transform values are compared with this
+  # absolute tolerance to avoid false failures from floating-point metadata noise.
   check_alignment: true
+  transform_atol: 1.0e-9
 
   # Binary class interpretation.
   # These values are converted to water=1; all other valid values become land=0.

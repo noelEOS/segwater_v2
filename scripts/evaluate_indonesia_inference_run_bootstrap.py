@@ -1,5 +1,5 @@
+import argparse
 import json
-import shutil
 import sys
 from datetime import datetime, timezone
 from pathlib import Path
@@ -24,13 +24,55 @@ def timestamp_id() -> str:
     return datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
 
 
+def parse_args() -> argparse.Namespace:
+    parser = argparse.ArgumentParser(description="Bootstrap evaluation for one inference run with probability maps.")
+    parser.add_argument(
+        "config",
+        nargs="?",
+        default="configs/evaluation/indonesia_inference_run_bootstrap_semarang.yaml",
+        help="Path to the YAML config file.",
+    )
+    parser.add_argument("--run-dir", default=None, help="Override evaluation.run_dir from the config.")
+    parser.add_argument("--run-name", default=None, help="Override output.run_name from the config.")
+    parser.add_argument("--threshold", type=float, default=None, help="Override evaluation.prediction.threshold.")
+    parser.add_argument(
+        "--comparison",
+        choices=["greater_than", "greater_equal"],
+        default=None,
+        help="Override evaluation.prediction.comparison.",
+    )
+    return parser.parse_args()
+
+
 def load_config(config_path: Path) -> dict[str, Any]:
     return OmegaConf.to_container(OmegaConf.load(config_path), resolve=True)
+
+
+def apply_cli_overrides(cfg: dict[str, Any], args: argparse.Namespace) -> dict[str, Any]:
+    cfg = dict(cfg)
+    cfg["evaluation"] = dict(cfg["evaluation"])
+    cfg["evaluation"]["prediction"] = dict(cfg["evaluation"].get("prediction", {}))
+    cfg["output"] = dict(cfg.get("output", {}))
+
+    if args.run_dir is not None:
+        cfg["evaluation"]["run_dir"] = args.run_dir
+    if args.run_name is not None:
+        cfg["output"]["run_name"] = args.run_name
+    if args.threshold is not None:
+        cfg["evaluation"]["prediction"]["threshold"] = args.threshold
+    if args.comparison is not None:
+        cfg["evaluation"]["prediction"]["comparison"] = args.comparison
+    return cfg
 
 
 def write_json(path: Path, payload: dict[str, Any]) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(json.dumps(payload, indent=2, sort_keys=False), encoding="utf-8")
+
+
+def write_yaml(path: Path, payload: dict[str, Any]) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    OmegaConf.save(config=OmegaConf.create(payload), f=str(path))
 
 
 def calculate_metrics(y_true: np.ndarray, y_pred: np.ndarray) -> dict[str, float]:
@@ -94,8 +136,9 @@ def resolve_output_dir(cfg: dict[str, Any], config_path: Path) -> Path:
 
 
 def main() -> None:
-    config_path = Path(sys.argv[1] if len(sys.argv) > 1 else "configs/evaluation/indonesia_inference_run_bootstrap_semarang.yaml")
-    cfg = load_config(config_path)
+    args = parse_args()
+    config_path = Path(args.config)
+    cfg = apply_cli_overrides(load_config(config_path), args)
     evaluation = cfg["evaluation"]
 
     sample_size = int(evaluation.get("sample_size", 400))
@@ -114,10 +157,11 @@ def main() -> None:
 
     output_dir = resolve_output_dir(cfg, config_path)
     output_dir.mkdir(parents=True, exist_ok=True)
-    shutil.copy2(config_path, output_dir / "config.yaml")
+    write_yaml(output_dir / "config.yaml", cfg)
 
     print(f"Config: {config_path}")
     print(f"Output directory: {output_dir}")
+    print(f"Run directory: {run_dir}")
     print(f"Pairs: {len(file_pairs)}")
     print(f"Bootstraps per pair: {n_bootstraps}")
     print(f"Sample size: {sample_size}")
@@ -198,7 +242,14 @@ def main() -> None:
         "probability_comparison": probability_comparison,
         "metrics": METRIC_NAMES,
         "bootstrap_type": "pixel_level_bootstrap",
+        "cli_overrides": {
+            "run_dir": args.run_dir,
+            "run_name": args.run_name,
+            "threshold": args.threshold,
+            "comparison": args.comparison,
+        },
         "outputs": {
+            "effective_config_yaml": str(output_dir / "config.yaml"),
             "bootstrap_samples_parquet": str(samples_parquet),
             "bootstrap_samples_csv": str(samples_csv),
             "bootstrap_summary_csv": str(summary_csv),

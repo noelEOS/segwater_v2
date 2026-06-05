@@ -21,9 +21,12 @@ evaluation:
   prediction_filename_template: "{s1_id}_mask.tif"
 
   # Official pipeline behavior: fail if reference and prediction are not aligned.
+  # Shape and CRS must match exactly. Transform values are compared with this
+  # absolute tolerance to avoid false failures from floating-point metadata noise.
   # The notebook used to crop to the minimum shared shape, but this is intentionally
   # not allowed here.
   alignment_policy: "fail"
+  transform_atol: 1.0e-9
 
   # Missing predictions are recorded in evaluation_manifest.csv and skipped.
   # Set to "fail" if every model must contain every prediction.

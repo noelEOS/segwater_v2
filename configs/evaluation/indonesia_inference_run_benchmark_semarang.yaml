@@ -20,6 +20,11 @@ evaluation:
   alignment_policy: "evaluate_overlap"
   resolution_atol: 1.0e-12
 
+  # External evaluation mask. This keeps the inference-run benchmark consistent
+  # with the original GSHHG + Global Surface Water masked bootstrap evaluation.
+  valid_mask_path: "/Users/noel/Documents/VisualStudio/projects/sen12coast_global_dl/INDONESIA/results/S1_S2_Accuracy_Assessment/GSHHG_GlobalSurfaceWater_combined_mask.tif"
+  valid_mask_value: 1
+
   reference_water_values: [1]
   reference_nodata_values: [255]
 

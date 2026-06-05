@@ -11,7 +11,7 @@
 evaluation:
   name: "semarang_inference_run_probability_bootstrap"
 
-  run_dir: "/Volumes/noel_wd_black_sn850x/inference/runs/dev_sweep_all_s1_sanyung_20260603T013102Z_upernet_tu-convnextv2_base_native224_weighted_224_b0_s112"
+  run_dir: "/Volumes/noel_wd_black_sn850x/inference/runs/dev_sweep_all_s1_demak_20260602T153110Z_upernet_swin_base_224_native224_weighted_224_b0_s112"
 
   alignment_policy: "evaluate_overlap"
   resolution_atol: 1.0e-12

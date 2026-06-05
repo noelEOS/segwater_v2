@@ -78,6 +78,8 @@ def main() -> None:
     s1_id_regex = evaluation.get("s1_id_regex", DEFAULT_S1_ID_REGEX)
     reference_water_values = list(evaluation.get("reference_water_values", [1]))
     reference_nodata_values = evaluation.get("reference_nodata_values", [255])
+    valid_mask_path = evaluation.get("valid_mask_path", None)
+    valid_mask_value = evaluation.get("valid_mask_value", 1)
 
     alignment_policy = evaluation.get("alignment_policy", "evaluate_overlap")
     if alignment_policy != "evaluate_overlap":
@@ -108,6 +110,7 @@ def main() -> None:
     print(f"Model runs: {len(model_runs)}")
     print("Alignment policy: evaluate_overlap")
     print(f"Probability threshold: {probability_comparison} {probability_threshold}")
+    print(f"External valid mask: {valid_mask_path if valid_mask_path else 'None'}")
 
     started_at = utc_now_iso()
     metrics_rows: list[dict[str, Any]] = []
@@ -152,6 +155,8 @@ def main() -> None:
                     probability_threshold=probability_threshold,
                     probability_comparison=probability_comparison,
                     resolution_atol=resolution_atol,
+                    valid_mask_path=valid_mask_path,
+                    valid_mask_value=valid_mask_value,
                 )
                 metrics = calculate_iou_precision_recall(y_pred=y_pred, y_true=y_true)
 
@@ -202,6 +207,8 @@ def main() -> None:
         "output_dir": str(output_dir),
         "reference_dir": reference_dir,
         "reference_glob": reference_glob,
+        "valid_mask_path": valid_mask_path,
+        "valid_mask_value": valid_mask_value,
         "num_reference_files": len(reference_files),
         "num_model_runs": len(model_runs),
         "alignment_policy": alignment_policy,

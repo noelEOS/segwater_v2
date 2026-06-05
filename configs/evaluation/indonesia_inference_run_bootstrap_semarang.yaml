@@ -1,0 +1,60 @@
+# configs/evaluation/indonesia_inference_run_bootstrap_semarang.yaml
+#
+# Pixel-level bootstrap accuracy assessment for one inference run directory
+# containing probability maps, evaluated over the geospatial overlap with
+# selected concurrent S2-derived reference masks.
+#
+# Run with:
+#   python scripts/evaluate_indonesia_inference_run_bootstrap.py \
+#     configs/evaluation/indonesia_inference_run_bootstrap_semarang.yaml
+
+evaluation:
+  name: "semarang_inference_run_probability_bootstrap"
+
+  run_dir: "/Volumes/noel_wd_black_sn850x/inference/runs/dev_sweep_all_s1_sanyung_20260603T013102Z_upernet_tu-convnextv2_base_native224_weighted_224_b0_s112"
+
+  alignment_policy: "evaluate_overlap"
+  resolution_atol: 1.0e-12
+
+  sample_size: 400
+  n_bootstraps: 1000
+  seed: 42
+
+  reference_water_values: [1]
+  reference_nodata_values: [255]
+
+  prediction:
+    type: "probability"
+    threshold: 0.5
+    comparison: "greater_than"
+    path_template: "{run_dir}/{s1_id}/{s1_id}_probability_water.tif"
+
+  file_pairs:
+    - name: "PAIR_1"
+      s1_id: "S1_20190622_221715_76_8_9"
+      s2_reference_path: "/Users/noel/Documents/VisualStudio/projects/sen12coast_global_dl/INDONESIA/results/S1_S2_Accuracy_Assessment/Semarang_Concurrent_s1_s2/mndwi/mndwi_land_water_mask_clipped/S2_20190623_030000_concurrent_S1_20190622_221715_76_8_9_mndwi_land_water_mask.tif"
+
+    - name: "PAIR_2"
+      s1_id: "S1_20191020_221720_76_8_9"
+      s2_reference_path: "/Users/noel/Documents/VisualStudio/projects/sen12coast_global_dl/INDONESIA/results/S1_S2_Accuracy_Assessment/Semarang_Concurrent_s1_s2/mndwi/mndwi_land_water_mask_clipped/S2_20191021_025953_concurrent_S1_20191020_221720_76_8_9_mndwi_land_water_mask.tif"
+
+    - name: "PAIR_3"
+      s1_id: "S1_20200616_221721_76_8_9"
+      s2_reference_path: "/Users/noel/Documents/VisualStudio/projects/sen12coast_global_dl/INDONESIA/results/S1_S2_Accuracy_Assessment/Semarang_Concurrent_s1_s2/mndwi/mndwi_land_water_mask_clipped/S2_20200617_025955_concurrent_S1_20200616_221721_76_8_9_mndwi_land_water_mask.tif"
+
+    - name: "PAIR_4"
+      s1_id: "S1_20210810_221730_76_8_9"
+      s2_reference_path: "/Users/noel/Documents/VisualStudio/projects/sen12coast_global_dl/INDONESIA/results/S1_S2_Accuracy_Assessment/Semarang_Concurrent_s1_s2/mndwi/mndwi_land_water_mask_clipped/S2_20210811_025953_concurrent_S1_20210810_221730_76_8_9_mndwi_land_water_mask.tif"
+
+    - name: "PAIR_5"
+      s1_id: "S1_20230731_221741_76_8_9"
+      s2_reference_path: "/Users/noel/Documents/VisualStudio/projects/sen12coast_global_dl/INDONESIA/results/S1_S2_Accuracy_Assessment/Semarang_Concurrent_s1_s2/mndwi/mndwi_land_water_mask_clipped/S2_20230801_025957_concurrent_S1_20230731_221741_76_8_9_mndwi_land_water_mask.tif"
+
+    - name: "PAIR_6"
+      s1_id: "S1_20240725_221738_76_8_9"
+      s2_reference_path: "/Users/noel/Documents/VisualStudio/projects/sen12coast_global_dl/INDONESIA/results/S1_S2_Accuracy_Assessment/Semarang_Concurrent_s1_s2/mndwi/mndwi_land_water_mask_clipped/S2_20240726_025955_concurrent_S1_20240725_221738_76_8_9_mndwi_land_water_mask.tif"
+
+output:
+  root: "outputs/evaluation/indonesia_inference_run_bootstrap"
+  run_name: "semarang_probability_gt_0p5_overlap_bootstrap"
+  add_timestamp: true

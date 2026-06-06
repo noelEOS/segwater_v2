@@ -29,6 +29,14 @@ evaluation:
     type: "probability_map"
     path_template: "{run_dir}/{s1_id}/{s1_id}_probability_water.tif"
 
+  threshold_sweep:
+    enabled: true
+    start: 0.0
+    stop: 1.0
+    step: 0.01
+    comparison: "greater_than"
+    optimize_metrics: ["iou", "f1", "mcc"]
+
   model_runs:
     Upernet_ConvnextV2base_native224_weighted:
       run_dir: "/Volumes/noel_wd_black_sn850x/inference/runs/dev_sweep_all_s1_demak_20260602T153110Z_upernet_tu-convnextv2_base_native224_weighted_224_b0_s112"

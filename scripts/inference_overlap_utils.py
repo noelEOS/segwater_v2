@@ -67,13 +67,11 @@ def threshold_probability(probability: np.ndarray, threshold: float, comparison:
     raise ValueError("comparison must be 'greater_than' or 'greater_equal'.")
 
 
-def load_overlap_reference_and_prediction(
+def _load_overlap_reference_and_probability(
     reference_path: str,
     prediction_path: str,
     reference_water_values: list[int | float],
     reference_nodata_values: list[int | float] | None,
-    probability_threshold: float,
-    probability_comparison: str,
     resolution_atol: float,
     valid_mask_path: str | None = None,
     valid_mask_value: int | float = 1,
@@ -127,7 +125,7 @@ def load_overlap_reference_and_prediction(
         raise ValueError("No valid pixels remain inside the overlap window after applying masks.")
 
     y_true = np.isin(reference[valid_mask], reference_water_values).astype(np.uint8)
-    y_pred = threshold_probability(probability[valid_mask], probability_threshold, probability_comparison)
+    y_score = probability[valid_mask].astype(np.float32)
 
     reference_total_pixels = reference_profile["height"] * reference_profile["width"]
     overlap_pixels = int(reference.shape[0] * reference.shape[1])
@@ -152,10 +150,57 @@ def load_overlap_reference_and_prediction(
         "prediction_res_x": prediction_profile["res_x"],
         "prediction_res_y": prediction_profile["res_y"],
         "resolution_atol": resolution_atol,
+    }
+    return y_true, y_score, diagnostics
+
+
+def load_overlap_reference_and_prediction(
+    reference_path: str,
+    prediction_path: str,
+    reference_water_values: list[int | float],
+    reference_nodata_values: list[int | float] | None,
+    probability_threshold: float,
+    probability_comparison: str,
+    resolution_atol: float,
+    valid_mask_path: str | None = None,
+    valid_mask_value: int | float = 1,
+) -> tuple[np.ndarray, np.ndarray, dict[str, Any]]:
+    y_true, y_score, diagnostics = _load_overlap_reference_and_probability(
+        reference_path=reference_path,
+        prediction_path=prediction_path,
+        reference_water_values=reference_water_values,
+        reference_nodata_values=reference_nodata_values,
+        resolution_atol=resolution_atol,
+        valid_mask_path=valid_mask_path,
+        valid_mask_value=valid_mask_value,
+    )
+    y_pred = threshold_probability(y_score, probability_threshold, probability_comparison)
+    diagnostics.update({
         "probability_threshold": probability_threshold,
         "probability_comparison": probability_comparison,
-    }
+    })
     return y_true, y_pred, diagnostics
+
+
+def load_overlap_reference_and_score(
+    reference_path: str,
+    prediction_path: str,
+    reference_water_values: list[int | float],
+    reference_nodata_values: list[int | float] | None,
+    resolution_atol: float,
+    valid_mask_path: str | None = None,
+    valid_mask_value: int | float = 1,
+) -> tuple[np.ndarray, np.ndarray, dict[str, Any]]:
+    """Load binary reference labels and raw probability scores over the geospatial overlap."""
+    return _load_overlap_reference_and_probability(
+        reference_path=reference_path,
+        prediction_path=prediction_path,
+        reference_water_values=reference_water_values,
+        reference_nodata_values=reference_nodata_values,
+        resolution_atol=resolution_atol,
+        valid_mask_path=valid_mask_path,
+        valid_mask_value=valid_mask_value,
+    )
 
 
 def calculate_iou_precision_recall(y_pred: np.ndarray, y_true: np.ndarray) -> dict[str, float]:

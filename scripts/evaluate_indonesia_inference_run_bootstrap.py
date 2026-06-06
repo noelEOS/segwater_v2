@@ -10,7 +10,7 @@ import numpy as np
 import pandas as pd
 from omegaconf import OmegaConf
 
-from evaluation.metrics import METRIC_NAMES, compute_binary_metrics, summarize_bootstrap_samples
+from evaluation.metrics import METRIC_NAMES, compute_binary_metrics, summarize_bootstrap_samples, summarize_model_from_pair_means
 from inference_overlap_utils import load_overlap_reference_and_prediction
 
 
@@ -112,7 +112,6 @@ def normalize_prediction_type(prediction_type: str | None) -> str:
 def resolve_spatial_policy(evaluation: dict[str, Any]) -> str:
     spatial_policy = evaluation.get("spatial_policy")
     if spatial_policy is None:
-        # Backward compatibility with the previous alignment_policy setting.
         legacy_alignment_policy = evaluation.get("alignment_policy", "evaluate_overlap")
         if legacy_alignment_policy == "evaluate_overlap":
             spatial_policy = "evaluate_geospatial_overlap"
@@ -324,15 +323,16 @@ def main() -> None:
 
     identity_cols = ["evaluation_id", "s1_id", "s2_id", "model_name", "prediction_type", "inference_mode", "reference_path", "prediction_path"]
     df_model_pair_summary = df_bootstrap_summary.merge(df_scene_metadata, on=identity_cols, how="left") if not df_bootstrap_summary.empty else pd.DataFrame()
+    df_metrics_summary = summarize_model_from_pair_means(df_model_pair_summary, METRIC_NAMES)
 
     samples_parquet = output_dir / "bootstrap_samples.parquet"
     samples_csv = output_dir / "bootstrap_samples.csv"
     bootstrap_summary_csv = output_dir / "bootstrap_summary.csv"
     model_pair_summary_csv = output_dir / "model_pair_summary.csv"
+    metrics_summary_csv = output_dir / "metrics_summary.csv"
     scene_metadata_csv = output_dir / "scene_metadata.csv"
     spatial_csv = output_dir / "spatial_diagnostics.csv"
 
-    # Temporary backward-compatible aliases for existing notebooks/scripts.
     legacy_pair_metadata_csv = output_dir / "pair_metadata.csv"
     legacy_overlap_csv = output_dir / "overlap_diagnostics.csv"
 
@@ -340,6 +340,7 @@ def main() -> None:
     df_bootstrap.to_csv(samples_csv, index=False)
     df_bootstrap_summary.to_csv(bootstrap_summary_csv, index=False)
     df_model_pair_summary.to_csv(model_pair_summary_csv, index=False)
+    df_metrics_summary.to_csv(metrics_summary_csv, index=False)
     df_scene_metadata.to_csv(scene_metadata_csv, index=False)
     df_spatial.to_csv(spatial_csv, index=False)
 
@@ -369,6 +370,7 @@ def main() -> None:
         "probability_comparison": probability_comparison,
         "metrics": METRIC_NAMES,
         "bootstrap_type": "pixel_level_bootstrap",
+        "model_summary_type": "macro_average_across_pair_means",
         "cli_overrides": {
             "run_dir": args.run_dir,
             "run_name": args.run_name,
@@ -381,6 +383,7 @@ def main() -> None:
             "bootstrap_samples_csv": str(samples_csv),
             "bootstrap_summary_csv": str(bootstrap_summary_csv),
             "model_pair_summary_csv": str(model_pair_summary_csv),
+            "metrics_summary_csv": str(metrics_summary_csv),
             "scene_metadata_csv": str(scene_metadata_csv),
             "spatial_diagnostics_csv": str(spatial_csv),
             "legacy_pair_metadata_csv": str(legacy_pair_metadata_csv),
@@ -394,6 +397,7 @@ def main() -> None:
     print(f"Bootstrap samples CSV: {samples_csv}")
     print(f"Bootstrap summary: {bootstrap_summary_csv}")
     print(f"Model-pair summary: {model_pair_summary_csv}")
+    print(f"Metrics summary: {metrics_summary_csv}")
     print(f"Scene metadata: {scene_metadata_csv}")
     print(f"Spatial diagnostics CSV: {spatial_csv}")
 

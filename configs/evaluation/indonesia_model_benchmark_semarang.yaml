@@ -46,14 +46,15 @@ evaluation:
   prediction_nodata_values: null
 
   model_dirs:
-    Deeplabv3plus_ResNet34_Whole: "/Volumes/noel_wd_black_sn850x/MACBOOK_AIR_M2_Backup/Downloads/SEGWATER-V2-INFERENCE/deeplabv3plus_resnet34_seed17"
-    SegFormer_ResNet34_Whole: "/Volumes/noel_wd_black_sn850x/MACBOOK_AIR_M2_Backup/Downloads/SEGWATER-V2-INFERENCE/segformer_resnet34_seed17"
-    Unet_Resnet50_Whole: "/Volumes/noel_wd_black_sn850x/MACBOOK_AIR_M2_Backup/Downloads/SEGWATER-V2-INFERENCE/unet_restnet50__seed11"
-    Unet_HighResNet_Whole: "/Volumes/noel_wd_black_sn850x/MACBOOK_AIR_M2_Backup/Downloads/SEGWATER-V2-INFERENCE/unet_tu-hrnet_w48_ssld_seed17"
-    UnetPlus_Resnet34_Whole: "/Volumes/noel_wd_black_sn850x/MACBOOK_AIR_M2_Backup/Downloads/SEGWATER-V2-INFERENCE/unetplusplus_resnet34_seed17"
-    UnetPlus_Resnet50_Whole: "/Volumes/noel_wd_black_sn850x/MACBOOK_AIR_M2_Backup/Downloads/SEGWATER-V2-INFERENCE/unetplusplus_resnet50_seed17"
-    Upernet_ConvnextV2base_Whole: "/Volumes/noel_wd_black_sn850x/MACBOOK_AIR_M2_Backup/Downloads/SEGWATER-V2-INFERENCE/upernet_tu-convnextv2_base_seed11"
-    Upernet_ConvnextV2base_encDep3_Whole: "/Volumes/noel_wd_black_sn850x/MACBOOK_AIR_M2_Backup/Downloads/SEGWATER-V2-INFERENCE/upernet-highres_tu-convnextv2_base_seed17"
+    #Deeplabv3plus_ResNet34_Whole: "/Volumes/noel_wd_black_sn850x/MACBOOK_AIR_M2_Backup/Downloads/SEGWATER-V2-INFERENCE/deeplabv3plus_resnet34_seed17"
+    #SegFormer_ResNet34_Whole: "/Volumes/noel_wd_black_sn850x/MACBOOK_AIR_M2_Backup/Downloads/SEGWATER-V2-INFERENCE/segformer_resnet34_seed17"
+    #Unet_Resnet50_Whole: "/Volumes/noel_wd_black_sn850x/MACBOOK_AIR_M2_Backup/Downloads/SEGWATER-V2-INFERENCE/unet_restnet50__seed11"
+    #Unet_HighResNet_Whole: "/Volumes/noel_wd_black_sn850x/MACBOOK_AIR_M2_Backup/Downloads/SEGWATER-V2-INFERENCE/unet_tu-hrnet_w48_ssld_seed17"
+    #UnetPlus_Resnet34_Whole: "/Volumes/noel_wd_black_sn850x/MACBOOK_AIR_M2_Backup/Downloads/SEGWATER-V2-INFERENCE/unetplusplus_resnet34_seed17"
+    #UnetPlus_Resnet50_Whole: "/Volumes/noel_wd_black_sn850x/MACBOOK_AIR_M2_Backup/Downloads/SEGWATER-V2-INFERENCE/unetplusplus_resnet50_seed17"
+    #Upernet_ConvnextV2base_Whole: "/Volumes/noel_wd_black_sn850x/MACBOOK_AIR_M2_Backup/Downloads/SEGWATER-V2-INFERENCE/upernet_tu-convnextv2_base_seed11"
+    #Upernet_ConvnextV2base_encDep3_Whole: "/Volumes/noel_wd_black_sn850x/MACBOOK_AIR_M2_Backup/Downloads/SEGWATER-V2-INFERENCE/upernet-highres_tu-convnextv2_base_seed17"
+    Unet_baseline_finetuned_SAYUNG: "/Volumes/noel_wd_black_sn850x/MACBOOK_AIR_M2_Backup/Downloads/SEGWATER-V2-INFERENCE/Sen12Coast_Indonesia_Semarang_unet_from_pretrained_finetuned_SAYUNG_whole_TS"
 
 output:
   root: "outputs/evaluation/indonesia_model_benchmark"

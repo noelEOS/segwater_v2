@@ -1,0 +1,67 @@
+# configs/evaluation/indonesia_inference_run_aucroc_semarang.yaml
+#
+# Experimental AUROC / average-precision evaluation for inference run
+# directories that contain per-scene water probability maps.
+#
+# Run with:
+#   python scripts/evaluate_indonesia_inference_run_aucroc.py \
+#     configs/evaluation/indonesia_inference_run_aucroc_semarang.yaml
+
+evaluation:
+  name: "semarang_inference_run_probability_aucroc"
+
+  reference_dir: "/Volumes/noel_wd_black_sn850x/MACBOOK_AIR_M2_Backup/Downloads/Concurrent_S2_ndwi_mndwi_awei_ndvi"
+  reference_glob: "*.tif"
+  s1_id_regex: "(S1_\\d{8}_\\d{6}_\\d+_\\d+_\\d+)"
+
+  # Probability maps are evaluated over the true geospatial overlap with the
+  # S2 reference and optional valid mask. No resampling is performed.
+  spatial_policy: "evaluate_geospatial_overlap"
+  resolution_atol: 1.0e-12
+
+  valid_mask_path: "/Users/noel/Documents/VisualStudio/projects/sen12coast_global_dl/INDONESIA/results/S1_S2_Accuracy_Assessment/GSHHG_GlobalSurfaceWater_combined_mask.tif"
+  valid_mask_value: 1
+
+  reference_water_values: [1]
+  reference_nodata_values: [255]
+
+  prediction:
+    type: "probability_map"
+    path_template: "{run_dir}/{s1_id}/{s1_id}_probability_water.tif"
+
+  model_runs:
+    Upernet_ConvnextV2base_native224_weighted:
+      run_dir: "/Volumes/noel_wd_black_sn850x/inference/runs/dev_sweep_all_s1_demak_20260602T153110Z_upernet_tu-convnextv2_base_native224_weighted_224_b0_s112"
+    Upernet_ConvnextV2base_native224_weighted_large_crop_only_1024_b128_s1024:
+      run_dir: "/Volumes/noel_wd_black_sn850x/inference/runs/dev_sweep_all_s1_demak_20260602T153110Z_upernet_tu-convnextv2_base_large_crop_only_1024_b128_s1024"
+    Unet_Resnet50_native224_weighted:
+      run_dir: "/Volumes/noel_wd_black_sn850x/inference/runs/dev_sweep_all_s1_demak_20260602T153110Z_unet_resnet50_native224_weighted_224_b0_s112"
+    Unet_Resnet50_large_crop_only_1024_b128_s1024:
+      run_dir: "/Volumes/noel_wd_black_sn850x/inference/runs/dev_sweep_all_s1_demak_20260602T153110Z_unet_resnet50_large_crop_only_1024_b128_s1024"
+    DeepLabV3plus_Resnet50_native224_weighted:
+      run_dir: "/Volumes/noel_wd_black_sn850x/inference/runs/dev_sweep_all_s1_demak_20260602T153110Z_deeplabv3plus_resnet50_native224_weighted_224_b0_s112"
+    DeepLabV3plus_Resnet50_large_crop_only_1024_b128_s1024:
+      run_dir: "/Volumes/noel_wd_black_sn850x/inference/runs/dev_sweep_all_s1_demak_20260602T153110Z_deeplabv3plus_resnet50_large_crop_only_1024_b128_s1024"
+    DPT_ViT_B_16_native224_weighted:
+      run_dir: "/Volumes/noel_wd_black_sn850x/inference/runs/dev_sweep_all_s1_demak_20260602T153110Z_dpt_vit_b_16_native224_weighted_224_b0_s112"
+    DPT_ViT_B_16_large_crop_only_1024_b128_s1024:
+      run_dir: "/Volumes/noel_wd_black_sn850x/inference/runs/dev_sweep_all_s1_demak_20260602T153110Z_dpt_vit_b_16_large_crop_only_1024_b128_s1024"
+    Segformer_MiT_B4_native224_weighted:
+      run_dir: "/Volumes/noel_wd_black_sn850x/inference/runs/dev_sweep_all_s1_demak_20260602T153110Z_segformer_mit_b4_native224_weighted_224_b0_s112"
+    Segformer_MiT_B4_large_crop_only_1024_b128_s1024:
+      run_dir: "/Volumes/noel_wd_black_sn850x/inference/runs/dev_sweep_all_s1_demak_20260602T153110Z_segformer_mit_b4_large_crop_only_1024_b128_s1024"
+    UnetPlusPlus_Resnet50_native224_weighted:
+      run_dir: "/Volumes/noel_wd_black_sn850x/inference/runs/dev_sweep_all_s1_demak_20260602T153110Z_unetplusplus_resnet50_native224_weighted_224_b0_s112"
+    UnetPlusPlus_Resnet50_large_crop_only_1024_b128_s1024:
+      run_dir: "/Volumes/noel_wd_black_sn850x/inference/runs/dev_sweep_all_s1_demak_20260602T153110Z_unetplusplus_resnet50_large_crop_only_1024_b128_s1024"
+    Upernet_Swin_Base_224_native224_weighted:
+      run_dir: "/Volumes/noel_wd_black_sn850x/inference/runs/dev_sweep_all_s1_demak_20260602T153110Z_upernet_swin_base_224_native224_weighted_224_b0_s112"
+    Upernet_Swin_Base_224_large_crop_only_1024_b128_s1024:
+      run_dir: "/Volumes/noel_wd_black_sn850x/inference/runs/dev_sweep_all_s1_demak_20260602T153110Z_upernet_swin_base_224_large_crop_only_1024_b128_s1024"
+
+  missing_prediction_policy: "record_and_continue"
+
+output:
+  root: "outputs/evaluation/indonesia_inference_run_aucroc"
+  run_name: "semarang_probability_aucroc"
+  add_timestamp: true

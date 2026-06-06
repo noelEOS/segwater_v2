@@ -1,5 +1,6 @@
 import argparse
 import json
+import re
 import sys
 from datetime import datetime, timezone
 from pathlib import Path
@@ -8,12 +9,14 @@ from typing import Any
 import numpy as np
 import pandas as pd
 from omegaconf import OmegaConf
-from sklearn.metrics import accuracy_score, f1_score, jaccard_score, matthews_corrcoef, precision_score, recall_score
 
+from evaluation.metrics import METRIC_NAMES, compute_binary_metrics, summarize_bootstrap_samples
 from inference_overlap_utils import load_overlap_reference_and_prediction
 
 
-METRIC_NAMES = ["oa", "f1", "precision", "recall", "iou", "mcc"]
+DEFAULT_S1_ID_REGEX = r"(S1_\d{8}_\d{6}_\d+_\d+_\d+)"
+DEFAULT_S2_ID_REGEX = r"(S2_\d{8}_\d{6})"
+SUPPORTED_SPATIAL_POLICIES = {"evaluate_geospatial_overlap"}
 
 
 def utc_now_iso() -> str:
@@ -75,56 +78,135 @@ def write_yaml(path: Path, payload: dict[str, Any]) -> None:
     OmegaConf.save(config=OmegaConf.create(payload), f=str(path))
 
 
-def calculate_metrics(y_true: np.ndarray, y_pred: np.ndarray) -> dict[str, float]:
-    return {
-        "oa": accuracy_score(y_true, y_pred),
-        "f1": f1_score(y_true, y_pred, zero_division=0),
-        "precision": precision_score(y_true, y_pred, zero_division=0),
-        "recall": recall_score(y_true, y_pred, zero_division=0),
-        "iou": jaccard_score(y_true, y_pred, zero_division=0),
-        "mcc": matthews_corrcoef(y_true, y_pred),
-    }
+def extract_id(filename: str, regex: str) -> str | None:
+    match = re.search(regex, filename)
+    return match.group(1) if match else None
 
 
-def bootstrap_pair(pair_name: str, y_true_all: np.ndarray, y_pred_all: np.ndarray, sample_size: int, n_bootstraps: int, rng: np.random.Generator) -> list[dict[str, Any]]:
+def extract_s1_id(path_or_name: str, regex: str = DEFAULT_S1_ID_REGEX) -> str:
+    return extract_id(Path(path_or_name).name, regex) or ""
+
+
+def extract_s2_id(path_or_name: str, regex: str = DEFAULT_S2_ID_REGEX) -> str:
+    return extract_id(Path(path_or_name).name, regex) or ""
+
+
+def infer_inference_mode(value: str) -> str:
+    lower_value = value.lower()
+    if "large_crop_only" in lower_value:
+        return "large_crop_only"
+    if "native224" in lower_value:
+        return "native224"
+    if "whole" in lower_value:
+        return "whole"
+    return ""
+
+
+def normalize_prediction_type(prediction_type: str | None) -> str:
+    normalized = str(prediction_type or "probability_map").lower()
+    if normalized in {"probability", "probability_map", "prob_map"}:
+        return "probability_map"
+    raise ValueError(f"This evaluator only supports prediction.type='probability_map'. Received: {prediction_type}")
+
+
+def resolve_spatial_policy(evaluation: dict[str, Any]) -> str:
+    spatial_policy = evaluation.get("spatial_policy")
+    if spatial_policy is None:
+        # Backward compatibility with the previous alignment_policy setting.
+        legacy_alignment_policy = evaluation.get("alignment_policy", "evaluate_overlap")
+        if legacy_alignment_policy == "evaluate_overlap":
+            spatial_policy = "evaluate_geospatial_overlap"
+        else:
+            spatial_policy = legacy_alignment_policy
+
+    if spatial_policy not in SUPPORTED_SPATIAL_POLICIES:
+        raise ValueError(
+            "evaluate_indonesia_inference_run_bootstrap.py only supports "
+            f"spatial_policy in {sorted(SUPPORTED_SPATIAL_POLICIES)}. Received: {spatial_policy}"
+        )
+    return str(spatial_policy)
+
+
+def resolve_pair_path(pair: dict[str, Any], new_key: str, legacy_key: str) -> str:
+    path = pair.get(new_key) or pair.get(legacy_key)
+    if not path:
+        raise ValueError(f"Each file pair must define {new_key} or {legacy_key}.")
+    return str(path)
+
+
+def resolve_run_dir(evaluation: dict[str, Any]) -> str:
+    run_dir = evaluation.get("run_dir")
+    if run_dir:
+        return str(run_dir)
+
+    model_runs = evaluation.get("models") or evaluation.get("model_runs")
+    if model_runs and len(model_runs) == 1:
+        _, model_info = next(iter(model_runs.items()))
+        if isinstance(model_info, dict):
+            candidate = model_info.get("run_dir") or model_info.get("path") or model_info.get("dir")
+            if candidate:
+                return str(candidate)
+        return str(model_info)
+
+    raise ValueError("Config must define evaluation.run_dir, or one model entry with run_dir/path/dir.")
+
+
+def resolve_model_name(evaluation: dict[str, Any], run_dir: str) -> str:
+    prediction_cfg = evaluation.get("prediction", {})
+    configured = evaluation.get("model_name") or prediction_cfg.get("model_name")
+    if configured:
+        return str(configured)
+
+    model_runs = evaluation.get("models") or evaluation.get("model_runs")
+    if model_runs and len(model_runs) == 1:
+        return str(next(iter(model_runs.keys())))
+
+    return Path(run_dir).name or "probability_map_model"
+
+
+def resolve_inference_mode(evaluation: dict[str, Any], model_name: str, run_dir: str) -> str:
+    prediction_cfg = evaluation.get("prediction", {})
+    return str(
+        evaluation.get("inference_mode")
+        or prediction_cfg.get("inference_mode")
+        or infer_inference_mode(model_name)
+        or infer_inference_mode(run_dir)
+    )
+
+
+def resolve_prediction_path(run_dir: str, s1_id: str, prediction_cfg: dict[str, Any]) -> Path:
+    path_template = prediction_cfg.get("path_template", "{run_dir}/{s1_id}/{s1_id}_probability_water.tif")
+    return Path(str(path_template).format(run_dir=run_dir, s1_id=s1_id))
+
+
+def bootstrap_pair(
+    row_context: dict[str, Any],
+    y_true_all: np.ndarray,
+    y_pred_all: np.ndarray,
+    sample_size: int,
+    n_bootstraps: int,
+    rng: np.random.Generator,
+) -> list[dict[str, Any]]:
+    evaluation_id = row_context["evaluation_id"]
     n_pixels = len(y_true_all)
     if n_pixels != len(y_pred_all):
-        raise ValueError(f"{pair_name}: y_true/y_pred length mismatch")
+        raise ValueError(f"{evaluation_id}: y_true/y_pred length mismatch")
     if sample_size > n_pixels:
-        raise ValueError(f"{pair_name}: sample_size ({sample_size}) > available pixels ({n_pixels})")
+        raise ValueError(f"{evaluation_id}: sample_size ({sample_size}) > available pixels ({n_pixels})")
     if n_pixels == 0:
-        raise ValueError(f"{pair_name}: no valid pixels available after masking")
+        raise ValueError(f"{evaluation_id}: no valid pixels available after masking")
 
     rows = []
     for bootstrap_idx in range(n_bootstraps):
         selected = rng.choice(n_pixels, sample_size, replace=True)
         rows.append({
-            "pair": pair_name,
+            **row_context,
             "bootstrap_idx": bootstrap_idx,
             "sample_size": sample_size,
             "available_valid_pixels": n_pixels,
-            **calculate_metrics(y_true_all[selected], y_pred_all[selected]),
+            **compute_binary_metrics(y_true_all[selected], y_pred_all[selected], include_counts=True),
         })
     return rows
-
-
-def summarize_bootstrap(df_bootstrap: pd.DataFrame, metrics: list[str]) -> pd.DataFrame:
-    summary = []
-    for pair_name, group in df_bootstrap.groupby("pair", sort=False):
-        row: dict[str, Any] = {
-            "pair": pair_name,
-            "n_bootstraps": int(len(group)),
-            "sample_size": int(group["sample_size"].iloc[0]),
-            "available_valid_pixels": int(group["available_valid_pixels"].iloc[0]),
-        }
-        for metric in metrics:
-            values = group[metric].to_numpy()
-            row[f"{metric}_mean"] = float(np.mean(values))
-            row[f"{metric}_std"] = float(np.std(values, ddof=1))
-            row[f"{metric}_ci_lower"] = float(np.percentile(values, 2.5))
-            row[f"{metric}_ci_upper"] = float(np.percentile(values, 97.5))
-        summary.append(row)
-    return pd.DataFrame(summary)
 
 
 def resolve_output_dir(cfg: dict[str, Any], config_path: Path) -> Path:
@@ -144,17 +226,26 @@ def main() -> None:
     sample_size = int(evaluation.get("sample_size", 400))
     n_bootstraps = int(evaluation.get("n_bootstraps", 1000))
     seed = int(evaluation.get("seed", 42))
-    reference_water_values = list(evaluation.get("reference_water_values", [1]))
-    reference_nodata_values = evaluation.get("reference_nodata_values", [255])
-    valid_mask_path = evaluation.get("valid_mask_path", None)
-    valid_mask_value = evaluation.get("valid_mask_value", 1)
+
+    reference_cfg = evaluation.get("reference", {})
+    prediction_cfg = evaluation.get("prediction", {})
+    valid_mask_cfg = evaluation.get("valid_mask", {})
+
+    prediction_type = normalize_prediction_type(prediction_cfg.get("type", "probability_map"))
+    spatial_policy = resolve_spatial_policy(evaluation)
+    reference_water_values = list(reference_cfg.get("water_values", evaluation.get("reference_water_values", [1])))
+    reference_nodata_values = reference_cfg.get("nodata_values", evaluation.get("reference_nodata_values", [255]))
+    valid_mask_path = valid_mask_cfg.get("path", evaluation.get("valid_mask_path", None))
+    valid_mask_value = valid_mask_cfg.get("value", evaluation.get("valid_mask_value", 1))
     resolution_atol = float(evaluation.get("resolution_atol", 1.0e-12))
 
-    prediction_cfg = evaluation["prediction"]
+    s1_id_regex = evaluation.get("s1_id_regex", DEFAULT_S1_ID_REGEX)
+    s2_id_regex = evaluation.get("s2_id_regex", DEFAULT_S2_ID_REGEX)
     probability_threshold = float(prediction_cfg.get("threshold", 0.5))
     probability_comparison = prediction_cfg.get("comparison", "greater_than")
-    probability_path_template = prediction_cfg.get("path_template", "{run_dir}/{s1_id}/{s1_id}_probability_water.tif")
-    run_dir = evaluation["run_dir"]
+    run_dir = resolve_run_dir(evaluation)
+    model_name = resolve_model_name(evaluation, run_dir)
+    inference_mode = resolve_inference_mode(evaluation, model_name, run_dir)
     file_pairs = evaluation["file_pairs"]
 
     output_dir = resolve_output_dir(cfg, config_path)
@@ -165,28 +256,45 @@ def main() -> None:
     print(f"Output directory: {output_dir}")
     print(f"Run directory: {run_dir}")
     print(f"Pairs: {len(file_pairs)}")
+    print(f"Model name: {model_name}")
+    print(f"Prediction type: {prediction_type}")
+    print(f"Spatial policy: {spatial_policy}")
     print(f"Bootstraps per pair: {n_bootstraps}")
     print(f"Sample size: {sample_size}")
     print(f"Seed: {seed}")
-    print("Alignment policy: evaluate_overlap")
     print(f"Probability threshold: {probability_comparison} {probability_threshold}")
     print(f"External valid mask: {valid_mask_path if valid_mask_path else 'None'}")
 
     started_at = utc_now_iso()
     rng = np.random.default_rng(seed)
     all_rows: list[dict[str, Any]] = []
-    pair_metadata: list[dict[str, Any]] = []
-    overlap_rows: list[dict[str, Any]] = []
+    scene_metadata: list[dict[str, Any]] = []
+    spatial_rows: list[dict[str, Any]] = []
 
     for pair_idx, pair in enumerate(file_pairs, start=1):
-        pair_name = pair.get("name", f"PAIR_{pair_idx}")
-        s1_id = pair["s1_id"]
-        reference_path = pair["s2_reference_path"]
-        prediction_path = Path(probability_path_template.format(run_dir=run_dir, s1_id=s1_id))
-        print(f"[{pair_idx}/{len(file_pairs)}] {pair_name}")
+        evaluation_id = pair.get("evaluation_id") or pair.get("name", f"PAIR_{pair_idx}")
+        reference_path = resolve_pair_path(pair, "reference_path", "s2_reference_path")
+        s1_id = pair.get("s1_id") or extract_s1_id(reference_path, regex=s1_id_regex)
+        s2_id = pair.get("s2_id") or extract_s2_id(reference_path, regex=s2_id_regex)
+        if not s1_id:
+            raise ValueError(f"{evaluation_id}: could not resolve s1_id from pair config or reference path")
+
+        prediction_path = resolve_prediction_path(run_dir, s1_id, prediction_cfg)
+        print(f"[{pair_idx}/{len(file_pairs)}] {evaluation_id}")
 
         if not prediction_path.exists():
             raise FileNotFoundError(f"Missing probability prediction: {prediction_path}")
+
+        row_context = {
+            "evaluation_id": evaluation_id,
+            "s1_id": s1_id,
+            "s2_id": s2_id,
+            "model_name": model_name,
+            "prediction_type": prediction_type,
+            "inference_mode": inference_mode,
+            "reference_path": reference_path,
+            "prediction_path": str(prediction_path),
+        }
 
         y_true_all, y_pred_all, diagnostics = load_overlap_reference_and_prediction(
             reference_path=reference_path,
@@ -200,34 +308,43 @@ def main() -> None:
             valid_mask_value=valid_mask_value,
         )
 
-        pair_metadata.append({
-            "pair": pair_name,
-            "s1_id": s1_id,
-            "s2_reference_path": reference_path,
-            "prediction_path": str(prediction_path),
-            "available_valid_pixels": int(len(y_true_all)),
+        scene_metadata.append({
+            **row_context,
+            "valid_pixels": int(len(y_true_all)),
             "reference_water_pixels": int(y_true_all.sum()),
             "prediction_water_pixels": int(y_pred_all.sum()),
         })
-        overlap_rows.append({"pair": pair_name, "s1_id": s1_id, "prediction_path": str(prediction_path), **diagnostics})
-        all_rows.extend(bootstrap_pair(pair_name, y_true_all, y_pred_all, sample_size, n_bootstraps, rng))
+        spatial_rows.append({**row_context, **diagnostics})
+        all_rows.extend(bootstrap_pair(row_context, y_true_all, y_pred_all, sample_size, n_bootstraps, rng))
 
     df_bootstrap = pd.DataFrame(all_rows)
-    df_summary = summarize_bootstrap(df_bootstrap, METRIC_NAMES)
-    df_pair_metadata = pd.DataFrame(pair_metadata)
-    df_overlap = pd.DataFrame(overlap_rows)
+    df_bootstrap_summary = summarize_bootstrap_samples(df_bootstrap, METRIC_NAMES)
+    df_scene_metadata = pd.DataFrame(scene_metadata)
+    df_spatial = pd.DataFrame(spatial_rows)
+
+    identity_cols = ["evaluation_id", "s1_id", "s2_id", "model_name", "prediction_type", "inference_mode", "reference_path", "prediction_path"]
+    df_model_pair_summary = df_bootstrap_summary.merge(df_scene_metadata, on=identity_cols, how="left") if not df_bootstrap_summary.empty else pd.DataFrame()
 
     samples_parquet = output_dir / "bootstrap_samples.parquet"
     samples_csv = output_dir / "bootstrap_samples.csv"
-    summary_csv = output_dir / "bootstrap_summary.csv"
-    pair_metadata_csv = output_dir / "pair_metadata.csv"
-    overlap_csv = output_dir / "overlap_diagnostics.csv"
+    bootstrap_summary_csv = output_dir / "bootstrap_summary.csv"
+    model_pair_summary_csv = output_dir / "model_pair_summary.csv"
+    scene_metadata_csv = output_dir / "scene_metadata.csv"
+    spatial_csv = output_dir / "spatial_diagnostics.csv"
+
+    # Temporary backward-compatible aliases for existing notebooks/scripts.
+    legacy_pair_metadata_csv = output_dir / "pair_metadata.csv"
+    legacy_overlap_csv = output_dir / "overlap_diagnostics.csv"
 
     df_bootstrap.to_parquet(samples_parquet, index=False)
     df_bootstrap.to_csv(samples_csv, index=False)
-    df_summary.to_csv(summary_csv, index=False)
-    df_pair_metadata.to_csv(pair_metadata_csv, index=False)
-    df_overlap.to_csv(overlap_csv, index=False)
+    df_bootstrap_summary.to_csv(bootstrap_summary_csv, index=False)
+    df_model_pair_summary.to_csv(model_pair_summary_csv, index=False)
+    df_scene_metadata.to_csv(scene_metadata_csv, index=False)
+    df_spatial.to_csv(spatial_csv, index=False)
+
+    df_scene_metadata.to_csv(legacy_pair_metadata_csv, index=False)
+    df_spatial.to_csv(legacy_overlap_csv, index=False)
 
     metadata = {
         "script": "scripts/evaluate_indonesia_inference_run_bootstrap.py",
@@ -242,9 +359,12 @@ def main() -> None:
         "n_bootstraps": n_bootstraps,
         "seed": seed,
         "num_pairs": len(file_pairs),
-        "alignment_policy": "evaluate_overlap",
+        "model_name": model_name,
+        "inference_mode": inference_mode,
+        "spatial_policy": spatial_policy,
+        "alignment_policy": evaluation.get("alignment_policy", None),
         "resolution_atol": resolution_atol,
-        "prediction_type": "probability",
+        "prediction_type": prediction_type,
         "probability_threshold": probability_threshold,
         "probability_comparison": probability_comparison,
         "metrics": METRIC_NAMES,
@@ -259,9 +379,12 @@ def main() -> None:
             "effective_config_yaml": str(output_dir / "config.yaml"),
             "bootstrap_samples_parquet": str(samples_parquet),
             "bootstrap_samples_csv": str(samples_csv),
-            "bootstrap_summary_csv": str(summary_csv),
-            "pair_metadata_csv": str(pair_metadata_csv),
-            "overlap_diagnostics_csv": str(overlap_csv),
+            "bootstrap_summary_csv": str(bootstrap_summary_csv),
+            "model_pair_summary_csv": str(model_pair_summary_csv),
+            "scene_metadata_csv": str(scene_metadata_csv),
+            "spatial_diagnostics_csv": str(spatial_csv),
+            "legacy_pair_metadata_csv": str(legacy_pair_metadata_csv),
+            "legacy_overlap_diagnostics_csv": str(legacy_overlap_csv),
         },
     }
     write_json(output_dir / "run_metadata.json", metadata)
@@ -269,9 +392,10 @@ def main() -> None:
     print("Evaluation complete")
     print(f"Bootstrap samples Parquet: {samples_parquet}")
     print(f"Bootstrap samples CSV: {samples_csv}")
-    print(f"Summary CSV: {summary_csv}")
-    print(f"Pair metadata CSV: {pair_metadata_csv}")
-    print(f"Overlap diagnostics: {overlap_csv}")
+    print(f"Bootstrap summary: {bootstrap_summary_csv}")
+    print(f"Model-pair summary: {model_pair_summary_csv}")
+    print(f"Scene metadata: {scene_metadata_csv}")
+    print(f"Spatial diagnostics CSV: {spatial_csv}")
 
 
 if __name__ == "__main__":

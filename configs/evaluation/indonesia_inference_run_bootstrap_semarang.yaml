@@ -37,27 +37,33 @@ evaluation:
   file_pairs:
     - name: "PAIR_1"
       s1_id: "S1_20190622_221715_76_8_9"
-      s2_reference_path: "/Users/noel/Documents/VisualStudio/projects/sen12coast_global_dl/INDONESIA/results/S1_S2_Accuracy_Assessment/Semarang_Concurrent_s1_s2/mndwi/mndwi_land_water_mask_clipped/S2_20190623_030000_concurrent_S1_20190622_221715_76_8_9_mndwi_land_water_mask.tif"
+      #s2_reference_path: "/Users/noel/Documents/VisualStudio/projects/sen12coast_global_dl/INDONESIA/results/S1_S2_Accuracy_Assessment/Semarang_Concurrent_s1_s2/mndwi/mndwi_land_water_mask_clipped/S2_20190623_030000_concurrent_S1_20190622_221715_76_8_9_mndwi_land_water_mask.tif"
+      s2_reference_path: "/Volumes/noel_wd_black_sn850x/MACBOOK_AIR_M2_Backup/Downloads/Concurrent_S2_ndwi_mndwi_awei_ndvi/S2_20190623_030000_concurrent_S1_20190622_221715_76_8_9_clipped.tif-NDWI_MNDWI_AWEI_NDVI_veto_lt-02.tif"
 
     - name: "PAIR_2"
       s1_id: "S1_20191020_221720_76_8_9"
-      s2_reference_path: "/Users/noel/Documents/VisualStudio/projects/sen12coast_global_dl/INDONESIA/results/S1_S2_Accuracy_Assessment/Semarang_Concurrent_s1_s2/mndwi/mndwi_land_water_mask_clipped/S2_20191021_025953_concurrent_S1_20191020_221720_76_8_9_mndwi_land_water_mask.tif"
+      #s2_reference_path: "/Users/noel/Documents/VisualStudio/projects/sen12coast_global_dl/INDONESIA/results/S1_S2_Accuracy_Assessment/Semarang_Concurrent_s1_s2/mndwi/mndwi_land_water_mask_clipped/S2_20191021_025953_concurrent_S1_20191020_221720_76_8_9_mndwi_land_water_mask.tif"
+      s2_reference_path: "/Volumes/noel_wd_black_sn850x/MACBOOK_AIR_M2_Backup/Downloads/Concurrent_S2_ndwi_mndwi_awei_ndvi/S2_20191021_025953_concurrent_S1_20191020_221720_76_8_9_clipped.tif-NDWI_MNDWI_AWEI_NDVI_veto_lt-02.tif"
 
     - name: "PAIR_3"
       s1_id: "S1_20200616_221721_76_8_9"
-      s2_reference_path: "/Users/noel/Documents/VisualStudio/projects/sen12coast_global_dl/INDONESIA/results/S1_S2_Accuracy_Assessment/Semarang_Concurrent_s1_s2/mndwi/mndwi_land_water_mask_clipped/S2_20200617_025955_concurrent_S1_20200616_221721_76_8_9_mndwi_land_water_mask.tif"
+      #s2_reference_path: "/Users/noel/Documents/VisualStudio/projects/sen12coast_global_dl/INDONESIA/results/S1_S2_Accuracy_Assessment/Semarang_Concurrent_s1_s2/mndwi/mndwi_land_water_mask_clipped/S2_20200617_025955_concurrent_S1_20200616_221721_76_8_9_mndwi_land_water_mask.tif"
+      s2_reference_path: "/Volumes/noel_wd_black_sn850x/MACBOOK_AIR_M2_Backup/Downloads/Concurrent_S2_ndwi_mndwi_awei_ndvi/S2_20200617_025955_concurrent_S1_20200616_221721_76_8_9_clipped.tif-NDWI_MNDWI_AWEI_NDVI_veto_lt-02.tif"
 
     - name: "PAIR_4"
       s1_id: "S1_20210810_221730_76_8_9"
-      s2_reference_path: "/Users/noel/Documents/VisualStudio/projects/sen12coast_global_dl/INDONESIA/results/S1_S2_Accuracy_Assessment/Semarang_Concurrent_s1_s2/mndwi/mndwi_land_water_mask_clipped/S2_20210811_025953_concurrent_S1_20210810_221730_76_8_9_mndwi_land_water_mask.tif"
+      #s2_reference_path: "/Users/noel/Documents/VisualStudio/projects/sen12coast_global_dl/INDONESIA/results/S1_S2_Accuracy_Assessment/Semarang_Concurrent_s1_s2/mndwi/mndwi_land_water_mask_clipped/S2_20210811_025953_concurrent_S1_20210810_221730_76_8_9_mndwi_land_water_mask.tif"
+      s2_reference_path: "/Volumes/noel_wd_black_sn850x/MACBOOK_AIR_M2_Backup/Downloads/Concurrent_S2_ndwi_mndwi_awei_ndvi/S2_20210811_025953_concurrent_S1_20210810_221730_76_8_9_clipped.tif-NDWI_MNDWI_AWEI_NDVI_veto_lt-02.tif"
 
     - name: "PAIR_5"
       s1_id: "S1_20230731_221741_76_8_9"
-      s2_reference_path: "/Users/noel/Documents/VisualStudio/projects/sen12coast_global_dl/INDONESIA/results/S1_S2_Accuracy_Assessment/Semarang_Concurrent_s1_s2/mndwi/mndwi_land_water_mask_clipped/S2_20230801_025957_concurrent_S1_20230731_221741_76_8_9_mndwi_land_water_mask.tif"
+      #s2_reference_path: "/Users/noel/Documents/VisualStudio/projects/sen12coast_global_dl/INDONESIA/results/S1_S2_Accuracy_Assessment/Semarang_Concurrent_s1_s2/mndwi/mndwi_land_water_mask_clipped/S2_20230801_025957_concurrent_S1_20230731_221741_76_8_9_mndwi_land_water_mask.tif"
+      s2_reference_path: "/Volumes/noel_wd_black_sn850x/MACBOOK_AIR_M2_Backup/Downloads/Concurrent_S2_ndwi_mndwi_awei_ndvi/S2_20230801_025957_concurrent_S1_20230731_221741_76_8_9_clipped.tif-NDWI_MNDWI_AWEI_NDVI_veto_lt-02.tif"
 
     - name: "PAIR_6"
       s1_id: "S1_20240725_221738_76_8_9"
-      s2_reference_path: "/Users/noel/Documents/VisualStudio/projects/sen12coast_global_dl/INDONESIA/results/S1_S2_Accuracy_Assessment/Semarang_Concurrent_s1_s2/mndwi/mndwi_land_water_mask_clipped/S2_20240726_025955_concurrent_S1_20240725_221738_76_8_9_mndwi_land_water_mask.tif"
+      #s2_reference_path: "/Users/noel/Documents/VisualStudio/projects/sen12coast_global_dl/INDONESIA/results/S1_S2_Accuracy_Assessment/Semarang_Concurrent_s1_s2/mndwi/mndwi_land_water_mask_clipped/S2_20240726_025955_concurrent_S1_20240725_221738_76_8_9_mndwi_land_water_mask.tif"
+      s2_reference_path: "/Volumes/noel_wd_black_sn850x/MACBOOK_AIR_M2_Backup/Downloads/Concurrent_S2_ndwi_mndwi_awei_ndvi/S2_20240726_025955_concurrent_S1_20240725_221738_76_8_9_clipped.tif-NDWI_MNDWI_AWEI_NDVI_veto_lt-02.tif"
 
 output:
   root: "outputs/evaluation/indonesia_inference_run_bootstrap"

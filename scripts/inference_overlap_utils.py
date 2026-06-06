@@ -5,6 +5,8 @@ import numpy as np
 import rasterio
 from rasterio.windows import from_bounds
 
+from evaluation.metrics import compute_binary_metrics
+
 
 def read_profile(path: str) -> dict[str, Any]:
     with rasterio.open(path) as src:
@@ -157,17 +159,6 @@ def load_overlap_reference_and_prediction(
 
 
 def calculate_iou_precision_recall(y_pred: np.ndarray, y_true: np.ndarray) -> dict[str, float]:
-    pred = y_pred.flatten().astype(bool)
-    true = y_true.flatten().astype(bool)
-    intersection = np.logical_and(pred, true).sum()
-    union = np.logical_or(pred, true).sum()
-    if union == 0:
-        return {"iou": np.nan, "precision": np.nan, "recall": np.nan}
-
-    predicted_water = pred.sum()
-    reference_water = true.sum()
-    return {
-        "iou": intersection / union,
-        "precision": intersection / predicted_water if predicted_water > 0 else 0.0,
-        "recall": intersection / reference_water if reference_water > 0 else 0.0,
-    }
+    """Backward-compatible wrapper around the centralized metric utility."""
+    metrics = compute_binary_metrics(y_true=y_true, y_pred=y_pred, include_counts=False)
+    return {metric: metrics[metric] for metric in ["iou", "precision", "recall"]}

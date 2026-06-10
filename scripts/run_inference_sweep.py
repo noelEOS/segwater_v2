@@ -126,7 +126,8 @@ def main():
         if checkpoint["model"].get("encoder_name"):
             overrides["model.encoder_name"] = checkpoint["model"]["encoder_name"]
 
-        run_name = f"{sweep_id}__{checkpoint['name']}__{preset['name']}"
+        unsanitized_run_name = f"{sweep_id}__{checkpoint['name']}__{preset['name']}"
+        run_name = sanitize_for_path(unsanitized_run_name)
         overrides["inference.output.run_name"] = run_name
         overrides["inference.continue_on_error"] = True
 
@@ -187,6 +188,7 @@ def main():
                     "tta_enabled": overrides.get("inference.tta.enabled", False),
                     "tta_transforms": overrides.get("inference.tta.transforms", ""),
                     "run_name": run_name,
+                    "unsanitized_run_name": unsanitized_run_name,
                     "scene_output_dir": paths["scene_output_dir"],
                     "probability_geotiff": paths["probability_geotiff"],
                     "shoreline_geojson": paths["shoreline_geojson"],
@@ -210,9 +212,9 @@ def main():
         "checkpoint_path", "model_arch", "model_encoder", "preset_name",
         "tile_size", "buffer_size", "stride", "edge_policy", "stitching_mode",
         "blend_window", "tta_enabled", "tta_transforms", "run_name",
-        "scene_output_dir", "probability_geotiff", "shoreline_geojson",
-        "metadata_json", "started_at", "finished_at", "elapsed_minutes",
-        "error_message", "command",
+        "unsanitized_run_name", "scene_output_dir", "probability_geotiff",
+        "shoreline_geojson", "metadata_json", "started_at", "finished_at",
+        "elapsed_minutes", "error_message", "command",
     ]
     write_csv(sweep_root / "sweep_manifest.csv", manifest_rows, fieldnames)
 

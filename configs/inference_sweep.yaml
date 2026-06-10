@@ -5,7 +5,7 @@
 # into repeated calls to scripts/run_inference.py.
 
 sweep:
-  name: "dev_tiling_sweep"
+  name: "dev_sweep_all_s1_demak"
   dry_run: false
   continue_on_error: true
 

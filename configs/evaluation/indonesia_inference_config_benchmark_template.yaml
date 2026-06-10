@@ -1,0 +1,44 @@
+# configs/evaluation/indonesia_inference_config_benchmark_template.yaml
+#
+# Template used by scripts/benchmark_inference_config_sweep.py.
+# The wrapper copies these static Indonesia benchmark settings and fills
+# evaluation.models from the inference sweep_manifest.csv.
+
+evaluation:
+  name: "indonesia_inference_config_benchmark"
+
+  reference:
+    dir: "/Volumes/noel_wd_black_sn850x/MACBOOK_AIR_M2_Backup/Downloads/Concurrent_S2_ndwi_mndwi_awei_ndvi"
+    glob: "*.tif"
+    s1_id_regex: "(S1_\\d{8}_\\d{6}_\\d+_\\d+_\\d+)"
+    s2_id_regex: "(S2_\\d{8}_\\d{6})"
+    water_values: [1]
+    nodata_values: [255]
+
+  # Larger prediction rasters are evaluated only over their true geospatial
+  # overlap with the S2 reference. No cropped TIFFs are saved and no resampling
+  # is performed.
+  spatial_policy: "evaluate_geospatial_overlap"
+  resolution_atol: 1.0e-12
+
+  # External evaluation mask. This keeps the inference-run benchmark consistent
+  # with the original GSHHG + Global Surface Water masked evaluation.
+  valid_mask:
+    path: "/Users/noel/Documents/VisualStudio/projects/sen12coast_global_dl/INDONESIA/results/S1_S2_Accuracy_Assessment/GSHHG_GlobalSurfaceWater_combined_mask.tif"
+    value: 1
+
+  prediction:
+    type: "probability"
+    threshold: 0.5
+    comparison: "greater_than"
+    path_template: "{run_dir}/{s1_id}/{s1_id}_probability_water.tif"
+
+  # Filled automatically by scripts/benchmark_inference_config_sweep.py.
+  models: {}
+
+  missing_prediction_policy: "record_and_continue"
+
+output:
+  root: "outputs/evaluation/indonesia_inference_config_benchmark"
+  run_name: "indonesia_probability_gt_0p5_config_benchmark"
+  add_timestamp: true

@@ -13,6 +13,7 @@ from typing import Any
 import numpy as np
 import pandas as pd
 from omegaconf import OmegaConf
+from pandas.errors import EmptyDataError
 
 
 METRICS = ["oa", "f1", "precision", "recall", "iou", "mcc"]
@@ -38,6 +39,13 @@ def write_yaml(path: Path, payload: dict[str, Any]) -> None:
 def write_json(path: Path, payload: dict[str, Any]) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(json.dumps(payload, indent=2, sort_keys=False), encoding="utf-8")
+
+
+def read_csv_allow_empty(path: Path) -> pd.DataFrame:
+    try:
+        return pd.read_csv(path)
+    except EmptyDataError:
+        return pd.DataFrame()
 
 
 def run_command(cmd: list[str], log_path: Path | None = None) -> None:
@@ -165,7 +173,7 @@ def generate_evaluation_config(
     output_path: Path,
 ) -> tuple[Path, Path]:
     template = load_yaml(template_path)
-    manifest = pd.read_csv(manifest_path)
+    manifest = read_csv_allow_empty(manifest_path)
     models, model_metadata = build_model_entries_from_manifest(manifest)
 
     if not models:
@@ -187,6 +195,9 @@ def generate_evaluation_config(
 
 
 def summarize_by_model(metrics: pd.DataFrame, model_metadata: pd.DataFrame) -> pd.DataFrame:
+    if metrics.empty or "model_name" not in metrics.columns:
+        return pd.DataFrame()
+
     rows: list[dict[str, Any]] = []
     for model_name, group in metrics.groupby("model_name", sort=False, dropna=False):
         row: dict[str, Any] = {
@@ -233,7 +244,7 @@ def paired_deltas_against_baseline(
     baseline_preset: str,
     metric: str = "iou",
 ) -> pd.DataFrame:
-    if metric not in metrics.columns:
+    if metrics.empty or metric not in metrics.columns:
         return pd.DataFrame()
 
     metadata_cols = ["model_name", "checkpoint_name", "preset_name"]
@@ -324,8 +335,8 @@ def build_rankings(
     if not metrics_path.exists():
         raise FileNotFoundError(f"Expected evaluator output not found: {metrics_path}")
 
-    metrics = pd.read_csv(metrics_path)
-    model_metadata = pd.read_csv(model_metadata_path)
+    metrics = read_csv_allow_empty(metrics_path)
+    model_metadata = read_csv_allow_empty(model_metadata_path)
     output_dir.mkdir(parents=True, exist_ok=True)
 
     summary = summarize_by_model(metrics, model_metadata)
@@ -335,7 +346,7 @@ def build_rankings(
         ranked_by_checkpoint = (
             summary.sort_values(["checkpoint_name", "iou_mean"], ascending=[True, False])
             .groupby("checkpoint_name", group_keys=False)
-            .apply(lambda g: g.assign(rank_within_checkpoint=np.arange(1, len(g) + 1)))
+            .apply(lambda g: g.assign(rank_within_checkpoint=np.arange(1, len(g) + 1)), include_groups=False)
             .reset_index(drop=True)
         )
         ranked_by_checkpoint.to_csv(output_dir / "ranked_configs_by_checkpoint.csv", index=False)
@@ -376,7 +387,7 @@ def build_rankings(
 
 
 def cleanup_heavy_outputs(manifest_path: Path, dry_run: bool = False) -> pd.DataFrame:
-    manifest = pd.read_csv(manifest_path)
+    manifest = read_csv_allow_empty(manifest_path)
     candidate_paths: set[Path] = set()
 
     for _, row in manifest.iterrows():
@@ -406,6 +417,14 @@ def cleanup_heavy_outputs(manifest_path: Path, dry_run: bool = False) -> pd.Data
     return pd.DataFrame(rows)
 
 
+def copy_log_into_sweep_dir(source_log: Path | None, sweep_dir: Path, target_name: str) -> Path | None:
+    if source_log is None or not source_log.exists():
+        return None
+    target = sweep_dir / target_name
+    shutil.copy2(source_log, target)
+    return target
+
+
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(
         description=(
@@ -426,15 +445,15 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--sweep-dir",
         default=None,
-        help="Existing sweep directory to evaluate. If omitted, the wrapper runs the inference sweep first.",
+        help="Existing sweep directory to evaluate. If provided, the wrapper does not run a new inference sweep.",
     )
     parser.add_argument(
         "--evaluation-dir",
         default=None,
-        help="Existing evaluation output directory to summarize. Implies --skip-evaluation.",
+        help="Existing evaluation output directory to summarize. If provided, the wrapper does not run the evaluator.",
     )
     parser.add_argument("--skip-inference", action="store_true", help="Do not run the inference sweep; require --sweep-dir.")
-    parser.add_argument("--skip-evaluation", action="store_true", help="Generate/summarize only; do not run evaluator.")
+    parser.add_argument("--skip-evaluation", action="store_true", help="Generate evaluation config only; do not run evaluator or ranking.")
     parser.add_argument("--cleanup-heavy-outputs", action="store_true", help="Delete probability GeoTIFFs/memmaps after successful ranking.")
     parser.add_argument("--cleanup-dry-run", action="store_true", help="List cleanup targets without deleting them.")
     parser.add_argument(
@@ -443,7 +462,7 @@ def parse_args() -> argparse.Namespace:
         default=None,
         help="Preset name to use for paired deltas. Can be provided multiple times.",
     )
-    parser.add_argument("--log-commands", action="store_true", help="Write inference/evaluation stdout/stderr to files under the sweep directory.")
+    parser.add_argument("--log-commands", action="store_true", help="Write inference/evaluation stdout/stderr logs.")
     return parser.parse_args()
 
 
@@ -456,13 +475,15 @@ def main() -> None:
     if args.skip_inference and not args.sweep_dir:
         raise ValueError("--skip-inference requires --sweep-dir")
 
+    inference_log_path: Path | None = None
+    copied_inference_log_path: Path | None = None
     if args.sweep_dir:
         sweep_dir = Path(args.sweep_dir)
     else:
-        log_path = None
         if args.log_commands:
-            log_path = Path("outputs/inference/sweeps") / f"benchmark_sweep_{int(time.time())}.log"
-        sweep_dir = run_inference_sweep(sweep_config, log_path=log_path)
+            inference_log_path = Path("outputs/inference/sweeps") / f"benchmark_inference_sweep_{int(time.time())}.log"
+        sweep_dir = run_inference_sweep(sweep_config, log_path=inference_log_path)
+        copied_inference_log_path = copy_log_into_sweep_dir(inference_log_path, sweep_dir, "inference_sweep.log")
 
     if not sweep_dir.exists():
         raise FileNotFoundError(f"Sweep directory does not exist: {sweep_dir}")
@@ -478,13 +499,14 @@ def main() -> None:
         output_path=generated_eval_config,
     )
 
+    evaluation_log_path: Path | None = None
     if args.evaluation_dir:
         evaluation_dir = Path(args.evaluation_dir)
     elif args.skip_evaluation:
         evaluation_dir = None
     else:
-        log_path = (sweep_dir / "evaluation.log") if args.log_commands else None
-        evaluation_dir = run_evaluation(generated_eval_config, log_path=log_path)
+        evaluation_log_path = (sweep_dir / "evaluation.log") if args.log_commands else None
+        evaluation_dir = run_evaluation(generated_eval_config, log_path=evaluation_log_path)
 
     if evaluation_dir is not None:
         summary_dir = sweep_dir / "benchmark_summary"
@@ -514,6 +536,8 @@ def main() -> None:
             "baseline_presets": baseline_presets,
             "cleanup_heavy_outputs": bool(args.cleanup_heavy_outputs),
             "cleanup_dry_run": bool(args.cleanup_dry_run),
+            "inference_log": str(copied_inference_log_path or inference_log_path) if (copied_inference_log_path or inference_log_path) else None,
+            "evaluation_log": str(evaluation_log_path) if evaluation_log_path else None,
         },
     )
 

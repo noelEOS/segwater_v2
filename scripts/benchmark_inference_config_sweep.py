@@ -325,6 +325,14 @@ def summarize_tta_gains(summary: pd.DataFrame) -> pd.DataFrame:
     return pd.DataFrame(records)
 
 
+def add_rank_within_checkpoint(summary: pd.DataFrame) -> pd.DataFrame:
+    ranked_groups = []
+    sorted_summary = summary.sort_values(["checkpoint_name", "iou_mean"], ascending=[True, False])
+    for _, group in sorted_summary.groupby("checkpoint_name", sort=False, dropna=False):
+        ranked_groups.append(group.assign(rank_within_checkpoint=np.arange(1, len(group) + 1)))
+    return pd.concat(ranked_groups, ignore_index=True) if ranked_groups else pd.DataFrame()
+
+
 def build_rankings(
     evaluation_dir: Path,
     model_metadata_path: Path,
@@ -343,12 +351,7 @@ def build_rankings(
     summary.to_csv(output_dir / "ranked_configs.csv", index=False)
 
     if "checkpoint_name" in summary.columns and "iou_mean" in summary.columns:
-        ranked_by_checkpoint = (
-            summary.sort_values(["checkpoint_name", "iou_mean"], ascending=[True, False])
-            .groupby("checkpoint_name", group_keys=False)
-            .apply(lambda g: g.assign(rank_within_checkpoint=np.arange(1, len(g) + 1)), include_groups=False)
-            .reset_index(drop=True)
-        )
+        ranked_by_checkpoint = add_rank_within_checkpoint(summary)
         ranked_by_checkpoint.to_csv(output_dir / "ranked_configs_by_checkpoint.csv", index=False)
 
     all_delta_tables = []

@@ -1,5 +1,6 @@
 import logging
 import os
+from pathlib import Path
 from typing import Dict
 
 import numpy as np
@@ -84,6 +85,7 @@ class ProbabilityStitcher:
         mode: str = "crop_only",
         blend_window: str = "hann",
         min_weight: float = 1e-3,
+        keep_accumulator_memmaps: bool = False,
     ):
         """
         Args:
@@ -95,6 +97,10 @@ class ProbabilityStitcher:
                 or ``constant``.
             min_weight: Lower bound for taper weights to avoid zero-coverage
                 pixels near true image boundaries.
+            keep_accumulator_memmaps: If true, keep weighted_blend sum/weight
+                accumulator memmaps after the normalized final probability
+                memmap is written. The default false removes these temporary
+                working files at close time.
         """
         self.output_path = output_path
         self.shape = shape
@@ -102,6 +108,7 @@ class ProbabilityStitcher:
         self.mode = mode
         self.blend_window = blend_window
         self.min_weight = float(min_weight)
+        self.keep_accumulator_memmaps = bool(keep_accumulator_memmaps)
         self._weight_cache: dict[tuple[int, int], np.ndarray] = {}
 
         if self.mode not in {"crop_only", "weighted_blend"}:
@@ -124,6 +131,8 @@ class ProbabilityStitcher:
 
         self.sum_memmap = None
         self.weight_memmap = None
+        self.sum_path = None
+        self.weight_path = None
 
         if self.mode == "weighted_blend":
             self.sum_path = f"{self.output_path}.sum.float32.memmap"
@@ -144,11 +153,12 @@ class ProbabilityStitcher:
             self.weight_memmap[:] = 0.0
 
         logger.info(
-            "Initialized Global Probability Canvas: shape=%s | dtype=%s | mode=%s | blend_window=%s",
+            "Initialized Global Probability Canvas: shape=%s | dtype=%s | mode=%s | blend_window=%s | keep_accumulator_memmaps=%s",
             self.shape,
             self.dtype,
             self.mode,
             self.blend_window,
+            self.keep_accumulator_memmaps,
         )
 
     @staticmethod
@@ -214,6 +224,23 @@ class ProbabilityStitcher:
         self.sum_memmap.flush()
         self.weight_memmap.flush()
 
+    @staticmethod
+    def _delete_file_if_present(path: str | None) -> None:
+        if not path:
+            return
+        path_obj = Path(path)
+        if not path_obj.exists():
+            return
+        path_obj.unlink()
+        logger.info("Deleted temporary stitcher accumulator memmap: %s", path_obj)
+
+    def _cleanup_accumulator_memmaps(self):
+        if self.keep_accumulator_memmaps:
+            logger.info("Keeping weighted_blend accumulator memmaps for debugging.")
+            return
+        self._delete_file_if_present(self.sum_path)
+        self._delete_file_if_present(self.weight_path)
+
     def close(self):
         """Flush final probability data to disk and close file handles."""
         if self.mode == "weighted_blend":
@@ -226,5 +253,8 @@ class ProbabilityStitcher:
             del self.sum_memmap
         if self.weight_memmap is not None:
             del self.weight_memmap
+
+        if self.mode == "weighted_blend":
+            self._cleanup_accumulator_memmaps()
 
         logger.info(f"Probability map successfully flushed and closed at {self.output_path}")

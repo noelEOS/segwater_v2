@@ -27,7 +27,7 @@ sweep:
 
   checkpoints:
     - name: "unet_resnet50"
-      checkpoint_path: "outputs/stage2/unet_resnet50/unet_resnet50_s42_step39600_miou0.9379.pth"
+      checkpoint_path: "outputs/stage2/unet_resnet50/09-44-49_s42/unet_resnet50_s42_step39600_miou0.9379.pth"
       model:
         arch: "unet"
         encoder_name: "resnet50"

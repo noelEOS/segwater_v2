@@ -10,11 +10,11 @@ sweep:
   continue_on_error: true
 
   # Use either input_images or input_dir + input_glob.
-  input_images:
-    - "/home/noel/s1/S1_20231008_110652_25_1_4.tif"
+  # input_images:
+  #  - "/home/noel/s1/S1_20231008_110652_25_1_4.tif"
 
-  # input_dir: "/home/noel/s1"
-  # input_glob: "*.tif"
+  input_dir: "/home/noel/data_semarang"
+  input_glob: "*.tif"
 
   # Overrides applied to every run in the sweep.
   common_overrides:

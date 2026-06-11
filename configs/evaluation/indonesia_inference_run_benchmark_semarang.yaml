@@ -64,6 +64,12 @@ evaluation:
       run_dir: "/Volumes/noel_wd_black_sn850x/inference/runs/dev_sweep_all_s1_demak_20260602T153110Z_upernet_swin_base_224_native224_weighted_224_b0_s112"
     Upernet_Swin_Base_224_large_crop_only_1024_b128_s1024:
       run_dir: "/Volumes/noel_wd_black_sn850x/inference/runs/dev_sweep_all_s1_demak_20260602T153110Z_upernet_swin_base_224_large_crop_only_1024_b128_s1024"
+    Unet_Resnet50_whole_image_baseline:
+      run_dir: "/Volumes/noel_wd_black_sn850x/inference/runs/unet_baseline_BASELINE_prob_map_semarang_weights_epoch9"
+    Unet_Resnet50_whole_image_baseline_finetuned:
+      run_dir: "/Volumes/noel_wd_black_sn850x/inference/runs/unet_baseline_FINETUNED_prob_map_semarang_epoch_990_iou_0.8506"
+      
+    
 
   missing_prediction_policy: "record_and_continue"
 

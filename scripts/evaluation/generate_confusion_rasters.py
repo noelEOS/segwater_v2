@@ -315,7 +315,7 @@ def main(argv=None) -> None:
 
     results = []
     for _, row in success_rows.iterrows():
-        model = str(row["model"])
+        model = str(row["model_name"])
         s1_id = str(row["s1_id"])
         reference_path = str(row["reference_path"])
         prediction_path = str(row["prediction_path"])
@@ -344,9 +344,9 @@ def main(argv=None) -> None:
                 print(status)
         except Exception as exc:
             print(f"ERROR: {exc}", file=sys.stderr)
-            result = {"model": model, "s1_id": s1_id, "status": "error", "error": str(exc)}
+            result = {"model_name": model, "s1_id": s1_id, "status": "error", "error": str(exc)}
 
-        results.append({"model": model, "s1_id": s1_id, **result})
+        results.append({"model_name": model, "s1_id": s1_id, **result})
 
     summary_df = pd.DataFrame(results)
     summary_csv = output_dir / "confusion_rasters_summary.csv"

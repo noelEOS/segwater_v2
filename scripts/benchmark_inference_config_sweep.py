@@ -160,9 +160,14 @@ def build_compatibility_matrix(sweep_cfg: dict[str, Any]) -> pd.DataFrame:
     return pd.DataFrame(rows)
 
 
-def make_filtered_sweep_config(master_cfg: dict[str, Any], checkpoint: dict[str, Any], compatible_presets: list[dict[str, Any]], sweep_name_suffix: str) -> dict[str, Any]:
+def make_filtered_sweep_config(master_cfg: dict[str, Any], checkpoint: dict[str, Any], compatible_presets: list[dict[str, Any]]) -> dict[str, Any]:
     generated = copy.deepcopy(master_cfg)
-    generated["sweep"]["name"] = f"{master_cfg['sweep']['name']}__{sweep_name_suffix}"
+    # Keep the original sweep name so run_inference_sweep.py preserves the
+    # established output naming pattern:
+    #   <sweep_name>_<timestamp>_<checkpoint>_<preset>
+    # The generated config filename and wrapper metadata still record which
+    # checkpoint subset was executed.
+    generated["sweep"]["name"] = master_cfg["sweep"]["name"]
     generated["sweep"]["checkpoints"] = [checkpoint]
     generated["sweep"]["presets"] = compatible_presets
     return generated
@@ -204,7 +209,7 @@ def run_compatible_inference_sweeps(sweep_config: Path, log_commands: bool = Fal
             continue
 
         suffix = f"{idx:03d}_{sanitize_for_path(checkpoint_name)}"
-        generated_cfg = make_filtered_sweep_config(master_cfg, checkpoint, compatible_presets, suffix)
+        generated_cfg = make_filtered_sweep_config(master_cfg, checkpoint, compatible_presets)
         generated_cfg_path = generated_sweeps_dir / f"sweep_{suffix}.yaml"
         write_yaml(generated_cfg_path, generated_cfg)
 
@@ -553,7 +558,6 @@ def main() -> None:
         raise ValueError("--skip-inference requires --sweep-dir")
 
     inference_log_path = None
-    copied_inference_log_path = None
     if args.sweep_dir:
         sweep_dir = Path(args.sweep_dir)
     else:

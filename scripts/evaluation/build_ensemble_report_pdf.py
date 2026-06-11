@@ -18,9 +18,9 @@ BENCH = Path(
     "indonesia_inference_run_benchmark/"
     "semarang_probability_gt_0p5_overlap_benchmark__20260606T062610Z"
 )
-MASKED = BENCH / "error_decorrelation_analysis_masked"
-SOFT = BENCH / "soft_ensemble_analysis"
-OUT = BENCH / "ensemble_feasibility_report.pdf"
+MASKED = BENCH / "ensemble_analysis" / "error_decorrelation_analysis_masked"
+SOFT = BENCH / "ensemble_analysis" / "soft_ensemble_analysis"
+OUT = BENCH / "ensemble_analysis" / "ensemble_feasibility_report.pdf"
 
 MARGIN = 15
 PAGE_W = 210 - 2 * MARGIN
@@ -195,11 +195,19 @@ def main():
     t = pd.DataFrame({
         "member": [shorten(m) for m in s1["members"]],
         "IoU @0.5": [fmt(v) for v in s1["iou_05"]],
-        "IoU tuned (LOO)": [fmt(v) for v in s1["iou_loo_tuned"]],
-        "tuned threshold": [fmt(v, 2) for v in s1["mean_tuned_threshold"]],
+        "macro @0.5": [fmt(v) for v in s1["iou_05_macro"]],
+        "IoU tuned": [fmt(v) for v in s1["iou_loo_tuned"]],
+        "macro tuned": [fmt(v) for v in s1["iou_loo_tuned_macro"]],
+        "thr": [fmt(v, 2) for v in s1["mean_tuned_threshold"]],
         "AUC-PR": [fmt(v) for v in s1["auc_pr"]],
     })
-    pdf.table(t, col_widths=[70, 27, 30, 28, 25])
+    pdf.table(t, col_widths=[58, 22, 22, 22, 23, 14, 19], font_size=8)
+    pdf.body(
+        "Micro = IoU of pooled pixel counts across the 6 scenes; macro = mean of "
+        "per-scene IoUs (each scene weighted equally, as in the AUC-ROC evaluation "
+        "pipeline). The two agree within ~0.01 for every member because the scenes "
+        "are homogeneous in water fraction (11-16%) and difficulty; all rankings and "
+        "conclusions in this report are identical under either aggregation.")
 
     # ------------------------------------------------- 3. hard votes
     pdf.h1("3. Hard majority voting (binary masks @0.5)")
@@ -274,9 +282,10 @@ def main():
                                   .str.replace("native224", "n224").values,
         "IoU @0.5": [fmt(v) for v in top["iou_05"]],
         "IoU tuned": [fmt(v) for v in top["iou_loo_tuned"]],
+        "macro tuned": [fmt(v) for v in top["iou_loo_tuned_macro"]],
         "AUC-PR": [fmt(v) for v in top["auc_pr"]],
     })
-    pdf.table(t, col_widths=[78, 32, 24, 24, 22], font_size=8)
+    pdf.table(t, col_widths=[68, 28, 22, 22, 22, 18], font_size=8)
     pdf.body(
         "Only the cross-tiling pair ConvNeXtV2-large + Swin-B-n224 meaningfully beats "
         "tuned Swin-B (0.7148 vs 0.7114, +0.34 pts); it is also the only set whose "

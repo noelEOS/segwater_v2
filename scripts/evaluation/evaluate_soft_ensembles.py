@@ -143,6 +143,28 @@ def loo_tuned_iou(per_scene_tp, per_scene_fp, per_scene_nw):
     return pooled, chosen
 
 
+def loo_tuned_macro(per_scene_tp, per_scene_fp, per_scene_nw):
+    """LOO threshold tuning with a MACRO objective: pick the threshold that
+    maximizes the mean of the train scenes' per-scene IoU curves, evaluate the
+    held-out scene's IoU at it. Returns (macro_iou, list of thresholds)."""
+    n = len(per_scene_tp)
+    with np.errstate(divide="ignore", invalid="ignore"):
+        iou_curves = [
+            per_scene_tp[i]
+            / np.maximum(per_scene_tp[i] + per_scene_fp[i]
+                         + (per_scene_nw[i] - per_scene_tp[i]), 1)
+            for i in range(n)
+        ]
+    held_ious, chosen = [], []
+    for held in range(n):
+        train_mean = np.mean([iou_curves[i] for i in range(n) if i != held],
+                             axis=0)
+        best = int(np.argmax(train_mean))
+        chosen.append(float(EDGES[best]))
+        held_ious.append(float(iou_curves[held][best]))
+    return float(np.mean(held_ious)), chosen
+
+
 def auc_pr(tp_curve: np.ndarray, fp_curve: np.ndarray, total_w: int) -> float:
     with np.errstate(divide="ignore", invalid="ignore"):
         precision = tp_curve / np.maximum(tp_curve + fp_curve, 1)
@@ -231,19 +253,31 @@ def main():
 
     # ---- evaluate all candidates (soft mean)
     rows = []
+    per_scene_single_rows = []
     for name, idxs in candidates.items():
         c05 = np.zeros(3, dtype=np.int64)
+        scene_iou05 = []
         tp_curves, fp_curves = [], []
         for s in range(len(scenes)):
             score = scene_probs[s][idxs].mean(axis=0) if len(idxs) > 1 \
                 else scene_probs[s][idxs[0]]
-            c05 += counts_at_05(score, scene_ref[s])
+            sc = counts_at_05(score, scene_ref[s])
+            c05 += sc
+            scene_iou05.append(iou_pr(*sc)[0])
             tpc, fpc = score_curves(score, scene_ref[s])
             tp_curves.append(tpc)
             fp_curves.append(fpc)
+            if len(idxs) == 1:
+                per_scene_single_rows.append(
+                    {"member": name, "scene": scenes[s], "iou_05": iou_pr(*sc)[0],
+                     "precision_05": iou_pr(*sc)[1], "recall_05": iou_pr(*sc)[2]}
+                )
         iou05, p05, r05 = iou_pr(*c05)
         loo_counts, thresholds = loo_tuned_iou(tp_curves, fp_curves, total_w)
         iou_loo, p_loo, r_loo = iou_pr(*loo_counts)
+        iou_loo_macro, thresholds_macro = loo_tuned_macro(
+            tp_curves, fp_curves, total_w
+        )
         pooled_tp = sum(tp_curves)
         pooled_fp = sum(fp_curves)
         names = name.split(",") if name != "ALL_12" else members
@@ -255,12 +289,18 @@ def main():
             "composition": "+".join(mechs),
             "tilings": "+".join(tilings),
             "iou_05": iou05, "precision_05": p05, "recall_05": r05,
+            "iou_05_macro": float(np.mean(scene_iou05)),
             "iou_loo_tuned": iou_loo, "precision_loo": p_loo, "recall_loo": r_loo,
+            "iou_loo_tuned_macro": iou_loo_macro,
             "mean_tuned_threshold": float(np.mean(thresholds)),
+            "mean_tuned_threshold_macro": float(np.mean(thresholds_macro)),
             "auc_pr": auc_pr(pooled_tp, pooled_fp, sum(total_w)),
         })
     res = pd.DataFrame(rows).sort_values("iou_loo_tuned", ascending=False)
     res.to_csv(out_dir / "soft_ensemble_results.csv", index=False)
+    pd.DataFrame(per_scene_single_rows).to_csv(
+        out_dir / "single_model_per_scene_metrics_05.csv", index=False
+    )
 
     # ---- weighted pairs: top-5 pairs by iou_loo_tuned
     top_pairs = res[(res["k"] == 2)].head(5)["members"].tolist()
@@ -360,17 +400,20 @@ def main():
     pd.DataFrame(orows).to_csv(out_dir / "oracle_05.csv", index=False)
 
     # ---- console summary
-    print("\nTop 12 by LOO-tuned IoU:")
+    print("\nTop 12 by LOO-tuned IoU (micro):")
     print(res.head(12)[["members", "k", "composition", "tilings", "iou_05",
-                        "iou_loo_tuned", "mean_tuned_threshold", "auc_pr"]]
+                        "iou_loo_tuned", "iou_loo_tuned_macro",
+                        "mean_tuned_threshold", "auc_pr"]]
           .to_string(index=False))
-    print("\nTop 12 by IoU at default 0.5:")
+    print("\nTop 12 by IoU at default 0.5 (micro):")
     print(res.sort_values("iou_05", ascending=False).head(12)
-          [["members", "k", "composition", "iou_05", "precision_05", "recall_05"]]
+          [["members", "k", "composition", "iou_05", "iou_05_macro",
+            "precision_05", "recall_05"]]
           .to_string(index=False))
     print("\nSingles (k=1):")
     print(res[res["k"] == 1].sort_values("iou_05", ascending=False)
-          [["members", "iou_05", "iou_loo_tuned", "mean_tuned_threshold", "auc_pr"]]
+          [["members", "iou_05", "iou_05_macro", "iou_loo_tuned",
+            "iou_loo_tuned_macro", "mean_tuned_threshold", "auc_pr"]]
           .to_string(index=False))
     print("\nWeighted pairs:")
     print(pd.DataFrame(wrows).to_string(index=False))

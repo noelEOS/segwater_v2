@@ -69,16 +69,20 @@ def main():
         for k in range(1, n + 1):
             for members in itertools.combinations(range(n), k):
                 tp = fp = fn = 0
+                scene_ious = []
                 for pred, ref, valid in scene_data:
                     votes = pred[list(members)].sum(axis=0)
                     if k % 2 == 0:
                         ens = (2 * votes >= k)
                     else:
                         ens = (2 * votes > k)
-                    tp += int(np.sum(valid & ens & (ref == 1)))
-                    fp += int(np.sum(valid & ens & (ref == 0)))
-                    fn += int(np.sum(valid & ~ens & (ref == 1)))
+                    s_tp = int(np.sum(valid & ens & (ref == 1)))
+                    s_fp = int(np.sum(valid & ens & (ref == 0)))
+                    s_fn = int(np.sum(valid & ~ens & (ref == 1)))
+                    tp, fp, fn = tp + s_tp, fp + s_fp, fn + s_fn
+                    scene_ious.append(metrics_from_counts(s_tp, s_fp, s_fn)["iou"])
                 m = metrics_from_counts(tp, fp, fn)
+                m["macro_iou"] = float(np.mean(scene_ious))
                 names = [models[i] for i in members]
                 mechs = sorted({MECHANISM[x] for x in names})
                 comp = "+".join(mechs)
@@ -92,7 +96,8 @@ def main():
                             MECHANISM[x] == "Transformer" for x in names
                         ),
                         "n_hybrid": sum(MECHANISM[x] == "Hybrid" for x in names),
-                        **{kk: m[kk] for kk in ["iou", "precision", "recall"]},
+                        **{kk: m[kk] for kk in ["iou", "macro_iou", "precision",
+                                                "recall"]},
                     }
                 )
         res = pd.DataFrame(rows).sort_values("iou", ascending=False)

@@ -179,6 +179,7 @@ def analyze_group(
 
     # Pooled confusion counts for singles / ensembles
     single_counts = {m: np.zeros(3, dtype=np.int64) for m in models}  # tp,fp,fn
+    single_scene_rows = []  # per-scene metrics for macro aggregation
 
     # Per-scene cached stacks for ensemble evaluation
     scene_data = []  # (pred_stack, ref, valid)
@@ -215,8 +216,12 @@ def analyze_group(
         mult_hist_fn += np.bincount(fn_m.sum(axis=0).ravel(), minlength=n + 1)
 
         for k, m in enumerate(models):
-            single_counts[m] += np.array(
+            c = np.array(
                 [int((cm[k] == CM_TP).sum()), int(fp_m[k].sum()), int(fn_m[k].sum())]
+            )
+            single_counts[m] += c
+            single_scene_rows.append(
+                {"model": m, "scene": scene, **metrics_from_counts(*c)}
             )
 
         scene_data.append((pred, ref.astype(np.uint8), valid))
@@ -251,11 +256,18 @@ def analyze_group(
     )
     mult_df.to_csv(out_dir / f"{tiling}__error_multiplicity.csv", index=False)
 
-    # ---- single-model pooled metrics
+    # ---- single-model metrics: micro (pooled counts) + macro (mean per scene)
+    scene_df = pd.DataFrame(single_scene_rows)
+    scene_df.to_csv(out_dir / f"{tiling}__single_model_per_scene_metrics.csv",
+                    index=False)
+    macro = scene_df.groupby("model")[["iou", "precision", "recall"]].mean()
     singles = pd.DataFrame(
         [
             {"model": m, "mechanism": MECHANISM[m],
-             **metrics_from_counts(*single_counts[m])}
+             **metrics_from_counts(*single_counts[m]),
+             "macro_iou": macro.loc[m, "iou"],
+             "macro_precision": macro.loc[m, "precision"],
+             "macro_recall": macro.loc[m, "recall"]}
             for m in models
         ]
     ).sort_values("iou", ascending=False)
@@ -265,20 +277,27 @@ def analyze_group(
     # ---- ensemble evaluation helpers (pooled over scenes)
     def pooled_vote(members_idx: list[int]) -> dict:
         tp = fp = fn = 0
+        scene_ious = []
         for pred, ref, valid in scene_data:
             m = vote_metrics(pred, ref, valid, members_idx)
             tp, fp, fn = tp + m["tp"], fp + m["fp"], fn + m["fn"]
-        return metrics_from_counts(tp, fp, fn)
+            scene_ious.append(m["iou"])
+        return {**metrics_from_counts(tp, fp, fn),
+                "macro_iou": float(np.mean(scene_ious))}
 
     def pooled_oracle(members_idx: list[int]) -> dict:
         """Pixel correct if >=1 member correct (upper bound)."""
         tp = fp = fn = 0
+        scene_ious = []
         for pred, ref, valid in scene_data:
             correct = (pred[members_idx] == ref[None]).any(axis=0)
-            tp += int(np.sum(valid & correct & (ref == 1)))
-            fp += int(np.sum(valid & ~correct & (ref == 0)))
-            fn += int(np.sum(valid & ~correct & (ref == 1)))
-        return metrics_from_counts(tp, fp, fn)
+            s_tp = int(np.sum(valid & correct & (ref == 1)))
+            s_fp = int(np.sum(valid & ~correct & (ref == 0)))
+            s_fn = int(np.sum(valid & ~correct & (ref == 1)))
+            tp, fp, fn = tp + s_tp, fp + s_fp, fn + s_fn
+            scene_ious.append(metrics_from_counts(s_tp, s_fp, s_fn)["iou"])
+        return {**metrics_from_counts(tp, fp, fn),
+                "macro_iou": float(np.mean(scene_ious))}
 
     ens_rows = []
     all_idx = list(range(n))
@@ -317,7 +336,8 @@ def analyze_group(
     ens_rows.append(
         {"ensemble": f"GREEDY_BEST[{','.join(best_members)}]",
          "k": int(best_step["step"]),
-         **{k: best_step[k] for k in ["iou", "precision", "recall", "tp", "fp", "fn"]}}
+         **{k: best_step[k] for k in ["iou", "macro_iou", "precision", "recall",
+                                      "tp", "fp", "fn"]}}
     )
     ens_df = pd.DataFrame(ens_rows)
     ens_df.to_csv(out_dir / f"{tiling}__ensemble_metrics.csv", index=False)

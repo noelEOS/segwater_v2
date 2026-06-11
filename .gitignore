@@ -12,6 +12,11 @@ checkpoints/
 # inference maps
 outputs/
 
+# experiments
+experiments/
+
+# claude
+.claude/
 
 # My notes
 docs/my_notes/

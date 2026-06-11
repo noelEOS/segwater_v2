@@ -339,7 +339,8 @@ def generate_evaluation_config(template_path: Path, manifest_path: Path, output_
     generated.setdefault("evaluation", {})
     generated["evaluation"]["models"] = models
     generated["evaluation"].pop("model_runs", None)
-    generated.setdefault("output", {})["run_name"] = f"{manifest_path.parent.name}__evaluation"
+    run_base = manifest_path.parent.name.removesuffix("__benchmark_wrapper")
+    generated.setdefault("output", {})["run_name"] = f"{run_base}__evaluation"
 
     write_yaml(output_path, generated)
     metadata_path = output_path.with_name("generated_model_metadata.csv")

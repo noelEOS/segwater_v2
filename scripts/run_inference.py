@@ -127,7 +127,7 @@ def build_model_and_load_checkpoint(cfg, device):
     return model, saved_step, saved_miou
 
 
-def _build_stitcher(output_path, global_shape, cfg, stitching_mode, blend_window, min_weight):
+def _build_stitcher(output_path, global_shape, cfg, stitching_mode, blend_window, min_weight, keep_accumulator_memmaps):
     return ProbabilityStitcher(
         output_path=str(output_path),
         shape=global_shape,
@@ -135,10 +135,11 @@ def _build_stitcher(output_path, global_shape, cfg, stitching_mode, blend_window
         mode=stitching_mode,
         blend_window=blend_window,
         min_weight=min_weight,
+        keep_accumulator_memmaps=keep_accumulator_memmaps,
     )
 
 
-def _build_tta_debug_stitchers(paths, global_shape, cfg, transforms, stitching_mode, blend_window, min_weight):
+def _build_tta_debug_stitchers(paths, global_shape, cfg, transforms, stitching_mode, blend_window, min_weight, keep_accumulator_memmaps):
     """Create one stitcher per inverse-transformed TTA view for QGIS inspection."""
     stitchers = {}
     for transform in transforms:
@@ -151,8 +152,18 @@ def _build_tta_debug_stitchers(paths, global_shape, cfg, transforms, stitching_m
             stitching_mode=stitching_mode,
             blend_window=blend_window,
             min_weight=min_weight,
+            keep_accumulator_memmaps=keep_accumulator_memmaps,
         )
     return stitchers
+
+
+def _unpack_tta_result(tta_result):
+    """Accept both legacy tensor-only and tuple-style TTA return values."""
+    if isinstance(tta_result, tuple):
+        if len(tta_result) != 2:
+            raise ValueError(f"predict_with_tta returned tuple of length {len(tta_result)}; expected 2.")
+        return tta_result
+    return tta_result, {}
 
 
 def process_scene(
@@ -179,9 +190,6 @@ def process_scene(
     logger.info(f"[OUTPUT] Scene ID: {paths.scene_id}")
     logger.info(f"[OUTPUT] Scene output directory: {paths.scene_dir}")
 
-    # ---------------------------------------------------------
-    # 3. Data & DataLoader Setup
-    # ---------------------------------------------------------
     logger.info("--- STAGE 3: DATA PIPELINE SETUP ---")
     inference_transform = build_inference_transform(cfg)
     channel_fill_values = build_channel_fill_values(cfg)
@@ -215,9 +223,6 @@ def process_scene(
     )
     logger.info(f"[DATA] DataLoader active: BS={cfg.inference.data.batch_size}, Workers={cfg.inference.data.num_workers}")
 
-    # ---------------------------------------------------------
-    # 4. Canvas / Stitcher Setup
-    # ---------------------------------------------------------
     logger.info("--- STAGE 4: PROBABILITY STITCHER SETUP ---")
     global_shape = (dataset.height, dataset.width)
 
@@ -225,6 +230,7 @@ def process_scene(
     stitching_mode = _get_optional_cfg(stitching_cfg, "mode", "crop_only")
     blend_window = _get_optional_cfg(stitching_cfg, "blend_window", "hann")
     min_weight = _get_optional_cfg(stitching_cfg, "min_weight", 1e-3)
+    keep_accumulator_memmaps = bool(_get_optional_cfg(stitching_cfg, "keep_accumulator_memmaps", False))
 
     stitcher = _build_stitcher(
         output_path=paths.probability_memmap,
@@ -233,6 +239,7 @@ def process_scene(
         stitching_mode=stitching_mode,
         blend_window=blend_window,
         min_weight=min_weight,
+        keep_accumulator_memmaps=keep_accumulator_memmaps,
     )
     logger.info(f"[STITCHER] Canvas allocated at {paths.probability_memmap}")
 
@@ -254,14 +261,12 @@ def process_scene(
                 stitching_mode,
                 blend_window,
                 min_weight,
+                keep_accumulator_memmaps,
             )
             logger.info("[TTA] Individual inverse-transformed probability GeoTIFF export enabled.")
     else:
         logger.info("[TTA] Disabled.")
 
-    # ---------------------------------------------------------
-    # 5. Inference Engine Loop
-    # ---------------------------------------------------------
     logger.info("--- STAGE 5: COMMENCING NEURAL INFERENCE ---")
     amp_dtype = torch.float16 if cfg.inference.data.precision == "float16" else torch.float32
     logger.info(f"[INFERENCE] Executing with Automatic Mixed Precision (AMP) dtype: {amp_dtype}")
@@ -274,13 +279,14 @@ def process_scene(
 
             with torch.autocast(device_type=device.type, dtype=amp_dtype):
                 if tta_enabled:
-                    probs, individual_tta_probs = predict_with_tta(
+                    tta_result = predict_with_tta(
                         model=model,
                         images=images,
                         num_classes=cfg.model.num_classes,
                         transforms=tta_transforms,
                         return_individual=tta_save_individual,
                     )
+                    probs, individual_tta_probs = _unpack_tta_result(tta_result)
                 else:
                     probs = predict_once(model, images, num_classes=cfg.model.num_classes)
                     individual_tta_probs = {}
@@ -295,9 +301,6 @@ def process_scene(
 
     logger.info("[INFERENCE] GPU computation complete.")
 
-    # ---------------------------------------------------------
-    # 6. Finalization, Product Export & Vectorization
-    # ---------------------------------------------------------
     logger.info("--- STAGE 6: DISK FLUSH & PRODUCT EXPORT ---")
     stitcher.close()
 
@@ -407,9 +410,6 @@ def process_scene(
     else:
         logger.info("[POST-PROC] Shoreline extraction bypassed via configuration.")
 
-    # ---------------------------------------------------------
-    # 7. Provenance Records
-    # ---------------------------------------------------------
     elapsed = (time.time() - scene_start_time) / 60
     raster_metadata = read_raster_metadata(input_image)
 
@@ -483,9 +483,6 @@ def main(cfg: DictConfig):
 
     logger.info(f"[DATA] Resolved {len(input_images)} input scene(s).")
 
-    # ---------------------------------------------------------
-    # 1. Environment & Hardware Setup
-    # ---------------------------------------------------------
     logger.info("--- STAGE 1: HARDWARE INITIALIZATION ---")
     device = torch.device(cfg.inference.device if torch.cuda.is_available() else "cpu")
     logger.info(f"[ENV] Target Device: {device}")
@@ -500,9 +497,6 @@ def main(cfg: DictConfig):
         torch.backends.cudnn.benchmark = True
         logger.info("[ENV] cuDNN benchmarking enabled for static graph optimization.")
 
-    # ---------------------------------------------------------
-    # 2. Model & Checkpoint Loading -- done once per process.
-    # ---------------------------------------------------------
     logger.info("--- STAGE 2: MODEL INSTANTIATION ---")
     model, saved_step, saved_miou = build_model_and_load_checkpoint(cfg, device)
 

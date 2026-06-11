@@ -69,6 +69,11 @@ inference:
     blend_window: "hann"      # Options: "hann", "linear", "constant"
     min_weight: 0.001         # Avoid zero-weight pixels at true image boundaries.
 
+    # weighted_blend needs temporary sum/weight accumulator memmaps while a scene
+    # is being stitched. They are deleted at close time by default after the final
+    # normalized probability memmap is written. Set true only for debugging.
+    keep_accumulator_memmaps: false
+
   # --- Test-Time Augmentation ---
   tta:
     # Disabled by default because it multiplies inference cost by the number of

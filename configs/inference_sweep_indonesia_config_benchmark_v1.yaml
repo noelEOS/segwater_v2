@@ -1,0 +1,176 @@
+# configs/inference_sweep_indonesia_config_benchmark_v1.yaml
+#
+# Inference-configuration benchmark sweep.
+#
+# This file is consumed by scripts/run_inference_sweep.py. The benchmark wrapper
+# scripts/benchmark_inference_config_sweep.py runs this sweep, generates an
+# evaluation config from sweep_manifest.csv, evaluates all produced run folders,
+# and writes ranked config summaries.
+#
+# Default compute posture:
+#   - one checkpoint
+#   - 9 no-TTA screening presets
+#   - 4 flip-TTA finalist presets
+#
+# To benchmark additional models, add more checkpoints below. The wrapper will
+# rank configs both overall and within each checkpoint.
+
+sweep:
+  name: "indonesia_inference_config_benchmark_v1"
+  dry_run: false
+  continue_on_error: true
+  output_root: "outputs/inference/sweeps"
+
+  # Use either input_images or input_dir + input_glob.
+  input_dir: "/home/noel/data_semarang"
+  input_glob: "*.tif"
+
+  # Overrides applied to every checkpoint x preset run.
+  # Benchmark evaluation consumes probability GeoTIFFs, so keep those enabled.
+  # Shoreline/vector products are not needed for the raster benchmark.
+  common_overrides:
+    inference.output.root_dir: "outputs/inference/config_benchmark_runs"
+    inference.output.save_probability_geotiff: true
+    inference.output.save_binary_mask_geotiff: false
+    inference.output.extract_shoreline: false
+    inference.output.overwrite: false
+
+    inference.data.edge_policy: "shift_inward"
+    inference.stitching.min_weight: 0.001
+    inference.tta.save_individual_probability_geotiffs: false
+
+  checkpoints:
+    - name: "unet_resnet50"
+      checkpoint_path: "outputs/stage2/unet_resnet50/09-44-49_s42/unet_resnet50_s42_step39600_miou0.9379.pth"
+      model:
+        arch: "unet"
+        encoder_name: "resnet50"
+
+  presets:
+    # ----------------------------------------------------------------------
+    # No-TTA screening grid
+    # ----------------------------------------------------------------------
+    - name: "native224_crop_only_224_b0_s224"
+      overrides:
+        inference.data.tile_size: 224
+        inference.data.buffer_size: 0
+        inference.data.stride: 224
+        inference.stitching.mode: "crop_only"
+        inference.tta.enabled: false
+
+    - name: "native224_weighted_224_b0_s112"
+      overrides:
+        inference.data.tile_size: 224
+        inference.data.buffer_size: 0
+        inference.data.stride: 112
+        inference.stitching.mode: "weighted_blend"
+        inference.stitching.blend_window: "hann"
+        inference.tta.enabled: false
+
+    - name: "native224_dense_224_b0_s56"
+      overrides:
+        inference.data.tile_size: 224
+        inference.data.buffer_size: 0
+        inference.data.stride: 56
+        inference.stitching.mode: "weighted_blend"
+        inference.stitching.blend_window: "hann"
+        inference.tta.enabled: false
+
+    - name: "mid512_crop_only_512_b0_s512"
+      overrides:
+        inference.data.tile_size: 512
+        inference.data.buffer_size: 0
+        inference.data.stride: 512
+        inference.stitching.mode: "crop_only"
+        inference.tta.enabled: false
+
+    - name: "mid512_weighted_512_b0_s256"
+      overrides:
+        inference.data.tile_size: 512
+        inference.data.buffer_size: 0
+        inference.data.stride: 256
+        inference.stitching.mode: "weighted_blend"
+        inference.stitching.blend_window: "hann"
+        inference.tta.enabled: false
+
+    - name: "mid512_crop_only_512_b64_s512"
+      overrides:
+        inference.data.tile_size: 512
+        inference.data.buffer_size: 64
+        inference.data.stride: 512
+        inference.stitching.mode: "crop_only"
+        inference.tta.enabled: false
+
+    - name: "mid512_weighted_512_b64_s256"
+      overrides:
+        inference.data.tile_size: 512
+        inference.data.buffer_size: 64
+        inference.data.stride: 256
+        inference.stitching.mode: "weighted_blend"
+        inference.stitching.blend_window: "hann"
+        inference.tta.enabled: false
+
+    - name: "large_crop_only_1024_b128_s1024"
+      overrides:
+        inference.data.tile_size: 1024
+        inference.data.buffer_size: 128
+        inference.data.stride: 1024
+        inference.stitching.mode: "crop_only"
+        inference.tta.enabled: false
+
+    - name: "large_weighted_1024_b128_s512"
+      overrides:
+        inference.data.tile_size: 1024
+        inference.data.buffer_size: 128
+        inference.data.stride: 512
+        inference.stitching.mode: "weighted_blend"
+        inference.stitching.blend_window: "hann"
+        inference.tta.enabled: false
+
+    # ----------------------------------------------------------------------
+    # Flip-TTA finalists. These are intentionally limited because TTA multiplies
+    # inference cost by the number of transforms.
+    # ----------------------------------------------------------------------
+    - name: "native224_weighted_224_b0_s112_tta_flip4"
+      overrides:
+        inference.data.tile_size: 224
+        inference.data.buffer_size: 0
+        inference.data.stride: 112
+        inference.stitching.mode: "weighted_blend"
+        inference.stitching.blend_window: "hann"
+        inference.tta.enabled: true
+        inference.tta.transforms: ["identity", "hflip", "vflip", "hvflip"]
+        inference.tta.merge: "mean"
+
+    - name: "mid512_weighted_512_b0_s256_tta_flip4"
+      overrides:
+        inference.data.tile_size: 512
+        inference.data.buffer_size: 0
+        inference.data.stride: 256
+        inference.stitching.mode: "weighted_blend"
+        inference.stitching.blend_window: "hann"
+        inference.tta.enabled: true
+        inference.tta.transforms: ["identity", "hflip", "vflip", "hvflip"]
+        inference.tta.merge: "mean"
+
+    - name: "mid512_weighted_512_b64_s256_tta_flip4"
+      overrides:
+        inference.data.tile_size: 512
+        inference.data.buffer_size: 64
+        inference.data.stride: 256
+        inference.stitching.mode: "weighted_blend"
+        inference.stitching.blend_window: "hann"
+        inference.tta.enabled: true
+        inference.tta.transforms: ["identity", "hflip", "vflip", "hvflip"]
+        inference.tta.merge: "mean"
+
+    - name: "large_weighted_1024_b128_s512_tta_flip4"
+      overrides:
+        inference.data.tile_size: 1024
+        inference.data.buffer_size: 128
+        inference.data.stride: 512
+        inference.stitching.mode: "weighted_blend"
+        inference.stitching.blend_window: "hann"
+        inference.tta.enabled: true
+        inference.tta.transforms: ["identity", "hflip", "vflip", "hvflip"]
+        inference.tta.merge: "mean"

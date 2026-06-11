@@ -1,7 +1,9 @@
 from __future__ import annotations
 
 import argparse
+import copy
 import json
+import re
 import shutil
 import subprocess
 import sys
@@ -25,6 +27,17 @@ DEFAULT_BASELINE_PRESETS = [
 
 def utc_now_iso() -> str:
     return datetime.now(timezone.utc).replace(microsecond=0).isoformat().replace("+00:00", "Z")
+
+
+def timestamp_id() -> str:
+    return datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
+
+
+def sanitize_for_path(value: str) -> str:
+    value = str(value).strip().replace(".", "p")
+    value = re.sub(r"[^A-Za-z0-9_-]+", "_", value)
+    value = re.sub(r"_+", "_", value).strip("_")
+    return value or "unknown"
 
 
 def load_yaml(path: Path) -> dict[str, Any]:
@@ -83,7 +96,7 @@ def find_newest_subdir(path: Path, before: set[Path] | None = None) -> Path:
     return max(candidates, key=lambda p: p.stat().st_mtime)
 
 
-def run_inference_sweep(sweep_config: Path, log_path: Path | None = None) -> Path:
+def run_single_inference_sweep(sweep_config: Path, log_path: Path | None = None) -> Path:
     sweep_cfg = load_yaml(sweep_config)
     sweep_root = Path(sweep_cfg["sweep"].get("output_root", "outputs/inference/sweeps"))
     before = list_subdirs(sweep_root)
@@ -99,8 +112,154 @@ def run_evaluation(evaluation_config: Path, log_path: Path | None = None) -> Pat
     return find_newest_subdir(output_root, before=before)
 
 
+def preset_model_input_size(preset: dict[str, Any]) -> int | None:
+    overrides = preset.get("overrides", {})
+    tile_size = overrides.get("inference.data.tile_size")
+    buffer_size = overrides.get("inference.data.buffer_size", 0)
+    if tile_size is None:
+        return None
+    return int(tile_size) + 2 * int(buffer_size or 0)
+
+
+def check_checkpoint_preset_compatibility(checkpoint: dict[str, Any], preset: dict[str, Any]) -> tuple[bool, str, int | None, int | None]:
+    preset_name = str(preset.get("name", ""))
+    allowed_presets = checkpoint.get("allowed_presets")
+    model_input_size = preset_model_input_size(preset)
+
+    if allowed_presets is not None and preset_name not in set(map(str, allowed_presets)):
+        return False, "not_in_allowed_presets", model_input_size, checkpoint.get("max_model_input_size")
+
+    max_model_input_size = checkpoint.get("max_model_input_size")
+    if max_model_input_size is not None and model_input_size is not None:
+        max_model_input_size = int(max_model_input_size)
+        if model_input_size > max_model_input_size:
+            return False, "input_too_large", model_input_size, max_model_input_size
+
+    return True, "", model_input_size, max_model_input_size
+
+
+def build_compatibility_matrix(sweep_cfg: dict[str, Any]) -> pd.DataFrame:
+    rows: list[dict[str, Any]] = []
+    sweep = sweep_cfg["sweep"]
+    for checkpoint in sweep.get("checkpoints", []):
+        for preset in sweep.get("presets", []):
+            compatible, reason, model_input_size, max_model_input_size = check_checkpoint_preset_compatibility(checkpoint, preset)
+            rows.append({
+                "checkpoint_name": checkpoint.get("name", ""),
+                "checkpoint_path": checkpoint.get("checkpoint_path", ""),
+                "model_arch": checkpoint.get("model", {}).get("arch", ""),
+                "model_encoder": checkpoint.get("model", {}).get("encoder_name", ""),
+                "preset_name": preset.get("name", ""),
+                "tile_size": preset.get("overrides", {}).get("inference.data.tile_size", ""),
+                "buffer_size": preset.get("overrides", {}).get("inference.data.buffer_size", ""),
+                "model_input_size": model_input_size if model_input_size is not None else "",
+                "max_model_input_size": max_model_input_size if max_model_input_size is not None else "",
+                "compatible": bool(compatible),
+                "skip_reason": reason,
+            })
+    return pd.DataFrame(rows)
+
+
+def make_filtered_sweep_config(master_cfg: dict[str, Any], checkpoint: dict[str, Any], compatible_presets: list[dict[str, Any]], sweep_name_suffix: str) -> dict[str, Any]:
+    generated = copy.deepcopy(master_cfg)
+    generated["sweep"]["name"] = f"{master_cfg['sweep']['name']}__{sweep_name_suffix}"
+    generated["sweep"]["checkpoints"] = [checkpoint]
+    generated["sweep"]["presets"] = compatible_presets
+    return generated
+
+
+def run_compatible_inference_sweeps(sweep_config: Path, log_commands: bool = False) -> tuple[Path, Path, Path | None]:
+    master_cfg = load_yaml(sweep_config)
+    sweep = master_cfg["sweep"]
+    sweep_root = Path(sweep.get("output_root", "outputs/inference/sweeps"))
+    wrapper_dir = sweep_root / f"{sanitize_for_path(sweep['name'])}__{timestamp_id()}__benchmark_wrapper"
+    generated_sweeps_dir = wrapper_dir / "generated_sweeps"
+    logs_dir = wrapper_dir / "logs"
+    wrapper_dir.mkdir(parents=True, exist_ok=True)
+    shutil.copy2(sweep_config, wrapper_dir / "master_sweep_config.yaml")
+
+    compatibility = build_compatibility_matrix(master_cfg)
+    compatibility.to_csv(wrapper_dir / "compatibility_matrix.csv", index=False)
+    compatibility[~compatibility["compatible"]].to_csv(wrapper_dir / "skipped_incompatible_configs.csv", index=False)
+
+    sweep_dirs: list[Path] = []
+    manifest_frames: list[pd.DataFrame] = []
+    run_rows: list[dict[str, Any]] = []
+
+    for idx, checkpoint in enumerate(sweep.get("checkpoints", []), start=1):
+        checkpoint_name = str(checkpoint.get("name", f"checkpoint_{idx:03d}"))
+        compatible_presets = [
+            preset for preset in sweep.get("presets", [])
+            if check_checkpoint_preset_compatibility(checkpoint, preset)[0]
+        ]
+        if not compatible_presets:
+            run_rows.append({
+                "checkpoint_name": checkpoint_name,
+                "generated_sweep_config": "",
+                "sweep_dir": "",
+                "num_presets": 0,
+                "status": "skipped",
+                "message": "no compatible presets",
+            })
+            continue
+
+        suffix = f"{idx:03d}_{sanitize_for_path(checkpoint_name)}"
+        generated_cfg = make_filtered_sweep_config(master_cfg, checkpoint, compatible_presets, suffix)
+        generated_cfg_path = generated_sweeps_dir / f"sweep_{suffix}.yaml"
+        write_yaml(generated_cfg_path, generated_cfg)
+
+        log_path = logs_dir / f"sweep_{suffix}.log" if log_commands else None
+        sweep_dir = run_single_inference_sweep(generated_cfg_path, log_path=log_path)
+        sweep_dirs.append(sweep_dir)
+
+        manifest_path = sweep_dir / "sweep_manifest.csv"
+        if manifest_path.exists():
+            manifest = read_csv_allow_empty(manifest_path)
+            if not manifest.empty:
+                manifest["source_sweep_dir"] = str(sweep_dir)
+                manifest["source_sweep_manifest"] = str(manifest_path)
+                manifest_frames.append(manifest)
+        run_rows.append({
+            "checkpoint_name": checkpoint_name,
+            "generated_sweep_config": str(generated_cfg_path),
+            "sweep_dir": str(sweep_dir),
+            "num_presets": len(compatible_presets),
+            "status": "completed",
+            "message": "",
+        })
+
+    if not manifest_frames:
+        raise RuntimeError(f"No sweep manifests were produced under {wrapper_dir}")
+
+    combined_manifest = pd.concat(manifest_frames, ignore_index=True)
+    combined_manifest_path = wrapper_dir / "sweep_manifest.csv"
+    combined_manifest.to_csv(combined_manifest_path, index=False)
+    pd.DataFrame(run_rows).to_csv(wrapper_dir / "generated_sweep_runs.csv", index=False)
+
+    counts = combined_manifest["status"].value_counts(dropna=False).to_dict() if "status" in combined_manifest else {}
+    write_json(wrapper_dir / "sweep_summary.json", {
+        "sweep_id": wrapper_dir.name,
+        "master_sweep_config": str(sweep_config),
+        "generated_sweep_runs_csv": str(wrapper_dir / "generated_sweep_runs.csv"),
+        "compatibility_matrix_csv": str(wrapper_dir / "compatibility_matrix.csv"),
+        "combined_manifest_csv": str(combined_manifest_path),
+        "source_sweep_dirs": [str(path) for path in sweep_dirs],
+        "status_counts": counts,
+    })
+    return wrapper_dir, combined_manifest_path, logs_dir if log_commands else None
+
+
 def normalize_model_name(value: str) -> str:
     return str(value).replace(" ", "_")
+
+
+def _as_int_return_code(value: Any) -> int | None:
+    if pd.isna(value) or value == "":
+        return None
+    try:
+        return int(value)
+    except (TypeError, ValueError):
+        return None
 
 
 def build_model_entries_from_manifest(manifest: pd.DataFrame) -> tuple[dict[str, dict[str, str]], pd.DataFrame]:
@@ -111,40 +270,65 @@ def build_model_entries_from_manifest(manifest: pd.DataFrame) -> tuple[dict[str,
 
     models: dict[str, dict[str, str]] = {}
     rows: list[dict[str, Any]] = []
+    skipped_rows: list[dict[str, Any]] = []
     group_cols = ["checkpoint_name", "preset_name", "run_name"]
 
     for (checkpoint_name, preset_name, run_name), group in manifest.groupby(group_cols, sort=False, dropna=False):
         first = group.iloc[0]
+        statuses = set(str(v) for v in group["status"].dropna().unique()) if "status" in group else set()
+        return_codes = {_as_int_return_code(v) for v in group["return_code"].dropna().unique()} if "return_code" in group else {0}
+        all_success = (not statuses or statuses == {"success"}) and return_codes.issubset({0, None})
+
         run_dir = Path(str(first["scene_output_dir"])).parent
         model_name = normalize_model_name(f"{checkpoint_name}__{preset_name}")
-        models[model_name] = {"run_dir": str(run_dir), "inference_mode": str(preset_name)}
+        n_probability_geotiffs = len(list(run_dir.glob("*/*_probability_water.tif"))) if run_dir.exists() else 0
 
-        row: dict[str, Any] = {
+        base_row: dict[str, Any] = {
             "model_name": model_name,
             "checkpoint_name": checkpoint_name,
             "preset_name": preset_name,
             "run_name": run_name,
             "run_dir": str(run_dir),
             "num_manifest_rows": int(len(group)),
+            "n_probability_geotiffs": int(n_probability_geotiffs),
         }
         for col in [
             "checkpoint_path", "model_arch", "model_encoder", "tile_size", "buffer_size",
             "stride", "edge_policy", "stitching_mode", "blend_window", "tta_enabled",
             "tta_transforms", "elapsed_minutes", "status", "return_code", "error_message",
+            "source_sweep_dir", "source_sweep_manifest",
         ]:
             if col in first.index:
-                row[col] = first[col]
-        rows.append(row)
+                base_row[col] = first[col]
 
-    return models, pd.DataFrame(rows)
+        if not all_success:
+            skipped_rows.append({**base_row, "skip_reason": "inference_group_not_successful"})
+            continue
+        if n_probability_geotiffs == 0:
+            skipped_rows.append({**base_row, "skip_reason": "no_probability_geotiffs"})
+            continue
+
+        models[model_name] = {"run_dir": str(run_dir), "inference_mode": str(preset_name)}
+        rows.append(base_row)
+
+    metadata = pd.DataFrame(rows)
+    skipped = pd.DataFrame(skipped_rows)
+    metadata.attrs["skipped_model_metadata"] = skipped
+    return models, metadata
 
 
 def generate_evaluation_config(template_path: Path, manifest_path: Path, output_path: Path) -> tuple[Path, Path]:
     template = load_yaml(template_path)
     manifest = read_csv_allow_empty(manifest_path)
     models, model_metadata = build_model_entries_from_manifest(manifest)
+    skipped_model_metadata = model_metadata.attrs.get("skipped_model_metadata", pd.DataFrame())
     if not models:
-        raise ValueError(f"No model entries could be generated from {manifest_path}")
+        skipped_path = output_path.with_name("generated_model_metadata_skipped.csv")
+        skipped_model_metadata.to_csv(skipped_path, index=False)
+        raise ValueError(
+            f"No successful model entries with probability GeoTIFFs could be generated from {manifest_path}. "
+            f"Skipped metadata written to {skipped_path}"
+        )
 
     generated = dict(template)
     generated.setdefault("evaluation", {})
@@ -154,7 +338,9 @@ def generate_evaluation_config(template_path: Path, manifest_path: Path, output_
 
     write_yaml(output_path, generated)
     metadata_path = output_path.with_name("generated_model_metadata.csv")
+    skipped_path = output_path.with_name("generated_model_metadata_skipped.csv")
     model_metadata.to_csv(metadata_path, index=False)
+    skipped_model_metadata.to_csv(skipped_path, index=False)
     return output_path, metadata_path
 
 
@@ -343,14 +529,6 @@ def cleanup_heavy_outputs(manifest_path: Path, dry_run: bool = False) -> pd.Data
     return pd.DataFrame(rows)
 
 
-def copy_log_into_sweep_dir(source_log: Path | None, sweep_dir: Path, target_name: str) -> Path | None:
-    if source_log is None or not source_log.exists():
-        return None
-    target = sweep_dir / target_name
-    shutil.copy2(source_log, target)
-    return target
-
-
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Run an inference-config sweep, evaluate it, and write ranked config summaries.")
     parser.add_argument("--sweep-config", default="configs/inference_sweep_indonesia_config_benchmark_v1.yaml")
@@ -379,14 +557,12 @@ def main() -> None:
     if args.sweep_dir:
         sweep_dir = Path(args.sweep_dir)
     else:
-        if args.log_commands:
-            inference_log_path = Path("outputs/inference/sweeps") / f"benchmark_inference_sweep_{int(time.time())}.log"
-        sweep_dir = run_inference_sweep(sweep_config, log_path=inference_log_path)
-        copied_inference_log_path = copy_log_into_sweep_dir(inference_log_path, sweep_dir, "inference_sweep.log")
-
-    if not sweep_dir.exists():
-        raise FileNotFoundError(f"Sweep directory does not exist: {sweep_dir}")
-    manifest_path = sweep_dir / "sweep_manifest.csv"
+        sweep_dir, manifest_path, logs_dir = run_compatible_inference_sweeps(sweep_config, log_commands=args.log_commands)
+        inference_log_path = logs_dir if logs_dir is not None else None
+    if args.sweep_dir:
+        if not sweep_dir.exists():
+            raise FileNotFoundError(f"Sweep directory does not exist: {sweep_dir}")
+        manifest_path = sweep_dir / "sweep_manifest.csv"
     if not manifest_path.exists():
         raise FileNotFoundError(f"Sweep manifest not found: {manifest_path}")
 
@@ -424,7 +600,7 @@ def main() -> None:
         "baseline_presets": baseline_presets,
         "cleanup_heavy_outputs": bool(args.cleanup_heavy_outputs),
         "cleanup_dry_run": bool(args.cleanup_dry_run),
-        "inference_log": str(copied_inference_log_path or inference_log_path) if (copied_inference_log_path or inference_log_path) else None,
+        "inference_log": str(inference_log_path) if inference_log_path else None,
         "evaluation_log": str(evaluation_log_path) if evaluation_log_path else None,
     })
 

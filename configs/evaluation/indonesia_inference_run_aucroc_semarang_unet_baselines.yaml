@@ -1,0 +1,49 @@
+# configs/evaluation/indonesia_inference_run_aucroc_semarang_unet_baselines.yaml
+#
+# AUROC / average-precision evaluation for the Unet baseline and finetuned
+# probability maps over Semarang.
+#
+# Run with:
+#   python scripts/evaluate_indonesia_inference_run_aucroc.py \
+#     configs/evaluation/indonesia_inference_run_aucroc_semarang_unet_baselines.yaml
+
+evaluation:
+  name: "semarang_unet_baselines_probability_aucroc"
+
+  reference_dir: "/Volumes/noel_wd_black_sn850x/MACBOOK_AIR_M2_Backup/Downloads/Concurrent_S2_ndwi_mndwi_awei_ndvi"
+  reference_glob: "*.tif"
+  s1_id_regex: "(S1_\\d{8}_\\d{6}_\\d+_\\d+_\\d+)"
+
+  spatial_policy: "evaluate_geospatial_overlap"
+  resolution_atol: 1.0e-12
+
+  valid_mask_path: "/Users/noel/Documents/VisualStudio/projects/sen12coast_global_dl/INDONESIA/results/S1_S2_Accuracy_Assessment/GSHHG_GlobalSurfaceWater_combined_mask.tif"
+  valid_mask_value: 1
+
+  reference_water_values: [1]
+  reference_nodata_values: [255]
+
+  prediction:
+    type: "probability_map"
+    path_template: "{run_dir}/{s1_id}/{s1_id}_probability_water.tif"
+
+  threshold_sweep:
+    enabled: true
+    start: 0.0
+    stop: 1.0
+    step: 0.01
+    comparison: "greater_than"
+    optimize_metrics: ["iou", "f1", "mcc"]
+
+  model_runs:
+    Unet_Resnet50_baseline_semarang_epoch9:
+      run_dir: "/Volumes/noel_wd_black_sn850x/inference/runs/unet_baseline_BASELINE_prob_map_semarang_weights_epoch9"
+    Unet_Resnet50_finetuned_semarang_epoch990_iou0p85:
+      run_dir: "/Volumes/noel_wd_black_sn850x/inference/runs/unet_baseline_FINETUNED_prob_map_semarang_epoch_990_iou_0.8506"
+
+  missing_prediction_policy: "record_and_continue"
+
+output:
+  root: "outputs/evaluation/indonesia_inference_run_aucroc"
+  run_name: "semarang_unet_baselines_probability_aucroc"
+  add_timestamp: true

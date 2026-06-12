@@ -40,7 +40,7 @@ evaluation:
   model_runs:
     Upernet_ConvnextV2base_native224_weighted:
       run_dir: "/Volumes/noel_wd_black_sn850x/inference/runs/dev_sweep_all_s1_demak_20260602T153110Z_upernet_tu-convnextv2_base_native224_weighted_224_b0_s112"
-    Upernet_ConvnextV2base_native224_weighted_large_crop_only_1024_b128_s1024:
+    Upernet_ConvnextV2base_large_crop_only_1024_b128_s1024:
       run_dir: "/Volumes/noel_wd_black_sn850x/inference/runs/dev_sweep_all_s1_demak_20260602T153110Z_upernet_tu-convnextv2_base_large_crop_only_1024_b128_s1024"
     Unet_Resnet50_native224_weighted:
       run_dir: "/Volumes/noel_wd_black_sn850x/inference/runs/dev_sweep_all_s1_demak_20260602T153110Z_unet_resnet50_native224_weighted_224_b0_s112"

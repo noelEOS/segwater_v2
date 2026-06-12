@@ -3,6 +3,7 @@ from __future__ import annotations
 import argparse
 import copy
 import json
+import os
 import re
 import shutil
 import subprocess
@@ -62,22 +63,39 @@ def read_csv_allow_empty(path: Path) -> pd.DataFrame:
 
 
 def run_command(cmd: list[str], log_path: Path | None = None) -> None:
+    """Run a command, streaming its output live to the console.
+
+    With log_path set, output is tee'd: every line is shown on the console as
+    it is produced AND written to the log file. PYTHONUNBUFFERED is forced so
+    child Python processes do not buffer their stdout when piped.
+    """
     started = time.time()
     print("$ " + " ".join(cmd), flush=True)
+    env = {**os.environ, "PYTHONUNBUFFERED": "1"}
 
     if log_path is None:
-        result = subprocess.run(cmd)
+        returncode = subprocess.run(cmd, env=env).returncode
     else:
         log_path.parent.mkdir(parents=True, exist_ok=True)
         with log_path.open("w", encoding="utf-8") as log_file:
-            result = subprocess.run(cmd, stdout=log_file, stderr=subprocess.STDOUT, text=True)
+            process = subprocess.Popen(
+                cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
+                text=True, env=env,
+            )
+            assert process.stdout is not None
+            for line in process.stdout:
+                sys.stdout.write(line)
+                sys.stdout.flush()
+                log_file.write(line)
+            returncode = process.wait()
 
     elapsed = (time.time() - started) / 60.0
-    if result.returncode != 0:
-        message = f"Command failed after {elapsed:.2f} min with exit code {result.returncode}: {' '.join(cmd)}"
+    if returncode != 0:
+        message = f"Command failed after {elapsed:.2f} min with exit code {returncode}: {' '.join(cmd)}"
         if log_path is not None:
             message += f"\nSee log: {log_path}"
         raise RuntimeError(message)
+    print(f"[done in {elapsed:.1f} min] {cmd[1] if len(cmd) > 1 else cmd[0]}", flush=True)
 
 
 def list_subdirs(path: Path) -> set[Path]:
@@ -465,8 +483,7 @@ def add_rank_within_checkpoint(summary: pd.DataFrame) -> pd.DataFrame:
     return pd.concat(ranked_groups, ignore_index=True) if ranked_groups else pd.DataFrame()
 
 
-def build_rankings(evaluation_dir: Path, model_metadata_path: Path, output_dir: Path, baseline_presets: list[str]) -> None:
-    metrics_path = evaluation_dir / "metrics_per_scene.csv"
+def build_rankings(metrics_path: Path, model_metadata_path: Path, output_dir: Path, baseline_presets: list[str], evaluation_dirs: list[str] | None = None) -> None:
     if not metrics_path.exists():
         raise FileNotFoundError(f"Expected evaluator output not found: {metrics_path}")
     metrics = read_csv_allow_empty(metrics_path)
@@ -494,7 +511,7 @@ def build_rankings(evaluation_dir: Path, model_metadata_path: Path, output_dir: 
 
     write_json(output_dir / "ranking_metadata.json", {
         "created_at": utc_now_iso(),
-        "evaluation_dir": str(evaluation_dir),
+        "evaluation_dirs": evaluation_dirs or [],
         "model_metadata_csv": str(model_metadata_path),
         "metrics_per_scene_csv": str(metrics_path),
         "baseline_presets": baseline_presets,
@@ -535,6 +552,191 @@ def cleanup_heavy_outputs(manifest_path: Path, dry_run: bool = False) -> pd.Data
     return pd.DataFrame(rows)
 
 
+def run_benchmark_interleaved(
+    sweep_config: Path,
+    evaluation_template: Path,
+    baseline_presets: list[str],
+    log_commands: bool,
+    skip_evaluation: bool,
+    cleanup: bool,
+    cleanup_dry_run: bool,
+) -> Path:
+    """Per-checkpoint pipeline: inference -> evaluation -> cleanup, then move
+    to the next checkpoint. Peak disk usage is bounded by one checkpoint's
+    outputs (instead of the whole sweep), and a failure in one checkpoint does
+    not discard the completed ones. Rankings are built at the end from the
+    concatenated per-checkpoint evaluation metrics."""
+    master_cfg = load_yaml(sweep_config)
+    sweep = master_cfg["sweep"]
+    sweep_root = Path(sweep.get("output_root", "outputs/inference/sweeps"))
+    wrapper_dir = sweep_root / f"{sanitize_for_path(sweep['name'])}__{timestamp_id()}__benchmark_wrapper"
+    generated_sweeps_dir = wrapper_dir / "generated_sweeps"
+    logs_dir = wrapper_dir / "logs"
+    wrapper_dir.mkdir(parents=True, exist_ok=True)
+    shutil.copy2(sweep_config, wrapper_dir / "master_sweep_config.yaml")
+
+    compatibility = build_compatibility_matrix(master_cfg)
+    compatibility.to_csv(wrapper_dir / "compatibility_matrix.csv", index=False)
+    compatibility[~compatibility["compatible"]].to_csv(wrapper_dir / "skipped_incompatible_configs.csv", index=False)
+
+    checkpoints = sweep.get("checkpoints", [])
+    manifest_frames: list[pd.DataFrame] = []
+    metrics_frames: list[pd.DataFrame] = []
+    metadata_frames: list[pd.DataFrame] = []
+    cleanup_frames: list[pd.DataFrame] = []
+    run_rows: list[dict[str, Any]] = []
+    sweep_dirs: list[Path] = []
+    evaluation_dirs: list[str] = []
+
+    for idx, checkpoint in enumerate(checkpoints, start=1):
+        checkpoint_name = str(checkpoint.get("name", f"checkpoint_{idx:03d}"))
+        compatible_presets = [
+            preset for preset in sweep.get("presets", [])
+            if check_checkpoint_preset_compatibility(checkpoint, preset)[0]
+        ]
+        row: dict[str, Any] = {
+            "checkpoint_name": checkpoint_name,
+            "generated_sweep_config": "",
+            "sweep_dir": "",
+            "evaluation_dir": "",
+            "num_presets": len(compatible_presets),
+            "status": "",
+            "message": "",
+        }
+        if not compatible_presets:
+            row.update(status="skipped", message="no compatible presets")
+            run_rows.append(row)
+            continue
+
+        print(
+            f"\n=== [{idx}/{len(checkpoints)}] {checkpoint_name}: "
+            f"inference ({len(compatible_presets)} presets) ===",
+            flush=True,
+        )
+        suffix = f"{idx:03d}_{sanitize_for_path(checkpoint_name)}"
+        generated_cfg = make_filtered_sweep_config(master_cfg, checkpoint, compatible_presets)
+        generated_cfg_path = generated_sweeps_dir / f"sweep_{suffix}.yaml"
+        write_yaml(generated_cfg_path, generated_cfg)
+        row["generated_sweep_config"] = str(generated_cfg_path)
+
+        log_path = logs_dir / f"sweep_{suffix}.log" if log_commands else None
+        try:
+            sweep_dir = run_single_inference_sweep(generated_cfg_path, log_path=log_path)
+        except RuntimeError as exc:
+            print(f"!!! inference failed for {checkpoint_name}: {exc}", file=sys.stderr, flush=True)
+            row.update(status="inference_failed", message=str(exc))
+            run_rows.append(row)
+            continue
+        sweep_dirs.append(sweep_dir)
+        row["sweep_dir"] = str(sweep_dir)
+
+        manifest_path = sweep_dir / "sweep_manifest.csv"
+        manifest = read_csv_allow_empty(manifest_path) if manifest_path.exists() else pd.DataFrame()
+        if not manifest.empty:
+            manifest["source_sweep_dir"] = str(sweep_dir)
+            manifest["source_sweep_manifest"] = str(manifest_path)
+            manifest_frames.append(manifest)
+
+        if skip_evaluation:
+            row.update(status="completed", message="inference only (--skip-evaluation)")
+            run_rows.append(row)
+            continue
+
+        print(f"=== [{idx}/{len(checkpoints)}] {checkpoint_name}: evaluation ===", flush=True)
+        try:
+            generated_eval_config, metadata_path = generate_evaluation_config(
+                template_path=evaluation_template,
+                manifest_path=manifest_path,
+                output_path=sweep_dir / "generated_evaluation_config.yaml",
+            )
+            eval_log = (sweep_dir / "evaluation.log") if log_commands else None
+            evaluation_dir = run_evaluation(generated_eval_config, log_path=eval_log)
+        except (RuntimeError, ValueError, FileNotFoundError) as exc:
+            print(f"!!! evaluation failed for {checkpoint_name}: {exc}", file=sys.stderr, flush=True)
+            row.update(status="evaluation_failed", message=str(exc))
+            run_rows.append(row)
+            continue
+        row["evaluation_dir"] = str(evaluation_dir)
+        evaluation_dirs.append(str(evaluation_dir))
+
+        metrics = read_csv_allow_empty(evaluation_dir / "metrics_per_scene.csv")
+        if not metrics.empty:
+            metrics_frames.append(metrics)
+        metadata = read_csv_allow_empty(metadata_path)
+        if not metadata.empty:
+            metadata_frames.append(metadata)
+
+        if cleanup or cleanup_dry_run:
+            cleaned = cleanup_heavy_outputs(manifest_path, dry_run=cleanup_dry_run)
+            cleaned.insert(0, "checkpoint_name", checkpoint_name)
+            cleanup_frames.append(cleaned)
+            freed_gb = cleaned.loc[cleaned["deleted"], "size_bytes"].sum() / 1e9
+            verb = "would free" if cleanup_dry_run else "freed"
+            print(f"=== [{idx}/{len(checkpoints)}] {checkpoint_name}: cleanup {verb} {freed_gb:.1f} GB ===", flush=True)
+
+        row.update(status="completed")
+        run_rows.append(row)
+
+    pd.DataFrame(run_rows).to_csv(wrapper_dir / "generated_sweep_runs.csv", index=False)
+
+    if not manifest_frames:
+        raise RuntimeError(f"No sweep manifests were produced under {wrapper_dir}")
+    combined_manifest = pd.concat(manifest_frames, ignore_index=True)
+    combined_manifest_path = wrapper_dir / "sweep_manifest.csv"
+    combined_manifest.to_csv(combined_manifest_path, index=False)
+
+    counts = combined_manifest["status"].value_counts(dropna=False).to_dict() if "status" in combined_manifest else {}
+    write_json(wrapper_dir / "sweep_summary.json", {
+        "sweep_id": wrapper_dir.name,
+        "master_sweep_config": str(sweep_config),
+        "generated_sweep_runs_csv": str(wrapper_dir / "generated_sweep_runs.csv"),
+        "compatibility_matrix_csv": str(wrapper_dir / "compatibility_matrix.csv"),
+        "combined_manifest_csv": str(combined_manifest_path),
+        "source_sweep_dirs": [str(path) for path in sweep_dirs],
+        "evaluation_dirs": evaluation_dirs,
+        "status_counts": counts,
+    })
+
+    model_metadata_path = wrapper_dir / "generated_model_metadata.csv"
+    if metadata_frames:
+        pd.concat(metadata_frames, ignore_index=True).to_csv(model_metadata_path, index=False)
+
+    if metrics_frames:
+        combined_metrics_path = wrapper_dir / "combined_metrics_per_scene.csv"
+        pd.concat(metrics_frames, ignore_index=True).to_csv(combined_metrics_path, index=False)
+        summary_dir = wrapper_dir / "benchmark_summary"
+        build_rankings(combined_metrics_path, model_metadata_path, summary_dir, baseline_presets, evaluation_dirs)
+        if cleanup_frames:
+            pd.concat(cleanup_frames, ignore_index=True).to_csv(summary_dir / "cleanup_heavy_outputs.csv", index=False)
+    elif not skip_evaluation:
+        print("WARNING: no evaluation metrics were produced; rankings skipped", file=sys.stderr, flush=True)
+
+    write_json(wrapper_dir / "benchmark_wrapper_metadata.json", {
+        "script": "scripts/benchmark_inference_config_sweep.py",
+        "mode": "interleaved",
+        "created_at": utc_now_iso(),
+        "sweep_config": str(sweep_config),
+        "evaluation_template": str(evaluation_template),
+        "sweep_dir": str(wrapper_dir),
+        "sweep_manifest": str(combined_manifest_path),
+        "generated_model_metadata_csv": str(model_metadata_path),
+        "evaluation_dirs": evaluation_dirs,
+        "baseline_presets": baseline_presets,
+        "cleanup_heavy_outputs": bool(cleanup),
+        "cleanup_dry_run": bool(cleanup_dry_run),
+        "logs_dir": str(logs_dir) if log_commands else None,
+    })
+
+    n_done = sum(1 for r in run_rows if r["status"] == "completed")
+    n_failed = sum(1 for r in run_rows if r["status"].endswith("_failed"))
+    print(f"\nBenchmark wrapper complete: {n_done} completed, {n_failed} failed, "
+          f"{len(run_rows) - n_done - n_failed} skipped", flush=True)
+    print(f"Wrapper directory: {wrapper_dir}")
+    if metrics_frames:
+        print(f"Benchmark summary: {wrapper_dir / 'benchmark_summary'}")
+    return wrapper_dir
+
+
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Run an inference-config sweep, evaluate it, and write ranked config summaries.")
     parser.add_argument("--sweep-config", default="configs/inference_sweep_indonesia_config_benchmark_v1.yaml")
@@ -546,7 +748,8 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--cleanup-heavy-outputs", action="store_true", help="Delete probability GeoTIFFs/memmaps after successful ranking.")
     parser.add_argument("--cleanup-dry-run", action="store_true", help="List cleanup targets without deleting them.")
     parser.add_argument("--baseline-preset", action="append", default=None, help="Preset name for paired deltas. Can be provided multiple times.")
-    parser.add_argument("--log-commands", action="store_true", help="Write inference/evaluation stdout/stderr logs.")
+    parser.add_argument("--log-commands", action="store_true", help="Tee inference/evaluation stdout/stderr to log files (output still streams to the console).")
+    parser.add_argument("--no-interleave", action="store_true", help="Legacy mode: run ALL inference sweeps first, then one combined evaluation. Uses N x ~60GB peak disk instead of ~60GB per checkpoint.")
     return parser.parse_args()
 
 
@@ -557,6 +760,21 @@ def main() -> None:
     baseline_presets = args.baseline_preset or DEFAULT_BASELINE_PRESETS
     if args.skip_inference and not args.sweep_dir:
         raise ValueError("--skip-inference requires --sweep-dir")
+
+    # Default: interleaved per-checkpoint pipeline (inference -> eval ->
+    # cleanup per checkpoint). Legacy combined mode remains available for
+    # --sweep-dir (re-evaluating an existing sweep) and --no-interleave.
+    if not args.sweep_dir and not args.no_interleave:
+        run_benchmark_interleaved(
+            sweep_config=sweep_config,
+            evaluation_template=evaluation_template,
+            baseline_presets=baseline_presets,
+            log_commands=args.log_commands,
+            skip_evaluation=args.skip_evaluation,
+            cleanup=args.cleanup_heavy_outputs,
+            cleanup_dry_run=args.cleanup_dry_run,
+        )
+        return
 
     inference_log_path = None
     if args.sweep_dir:
@@ -588,7 +806,7 @@ def main() -> None:
 
     if evaluation_dir is not None:
         summary_dir = sweep_dir / "benchmark_summary"
-        build_rankings(evaluation_dir, model_metadata_path, summary_dir, baseline_presets)
+        build_rankings(evaluation_dir / "metrics_per_scene.csv", model_metadata_path, summary_dir, baseline_presets, [str(evaluation_dir)])
         if args.cleanup_heavy_outputs or args.cleanup_dry_run:
             cleanup_heavy_outputs(manifest_path, dry_run=args.cleanup_dry_run).to_csv(summary_dir / "cleanup_heavy_outputs.csv", index=False)
 

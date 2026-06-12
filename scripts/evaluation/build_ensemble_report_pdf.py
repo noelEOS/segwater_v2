@@ -391,7 +391,7 @@ def main():
     pdf.set_font("courier", "", 8)
     for line in [
         "scripts/evaluation/analyze_error_decorrelation.py",
-        "scripts/evaluation/exhaustive_ensemble_search.py",
+        "scripts/evaluation/exhaustive_hard_vote_search.py",
         "scripts/evaluation/evaluate_soft_ensembles.py",
         "scripts/evaluation/generate_consensus_error_rasters.py",
         "<benchmark>/error_decorrelation_analysis{,_masked}/  (CSVs, heatmaps, REPORT.md)",

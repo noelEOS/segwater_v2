@@ -33,12 +33,15 @@ def main(cfg: DictConfig):
     )
     datamodule.setup()
     
+    _encoder_kwargs = cfg.model.get("encoder_kwargs", None)
+    _encoder_kwargs = OmegaConf.to_container(_encoder_kwargs, resolve=True) if _encoder_kwargs else {}
     model = SegmentationModelFactory.build(
         arch=cfg.model.arch,
         encoder_name=cfg.model.encoder_name,
         encoder_weights=cfg.model.encoder_weights,
         in_channels=cfg.model.in_channels,
-        classes=cfg.model.num_classes
+        classes=cfg.model.num_classes,
+        **_encoder_kwargs,
     )
     
     loss_fn = CoastalCompositeLoss(

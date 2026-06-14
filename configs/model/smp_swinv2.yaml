@@ -1,0 +1,24 @@
+# SwinV2 (window12to16, ImageNet-22k->1k) UperNet config.
+#
+# This encoder's pretrained checkpoint is fixed at its native 256px input
+# (timm pretrained_cfg fixed_input_size=True). To run it on this project's
+# 224px tiles, encoder_kwargs below are forwarded to timm.create_model via the
+# SegmentationModelFactory:
+#   - img_size=224         : recompute attention masks / relative-position
+#                            tables for the 224 grid instead of 256.
+#   - strict_img_size: false : relax the window-partition size assertion so the
+#                            window-16 blocks tile the resized grid.
+# Without both, the model fails to build at 224 (size assertion / reshape error).
+#
+# Select with:  model=smp_swinv2
+arch: upernet
+encoder_name: tu-swinv2_base_window12to16_192to256
+dice_weight: 0.5
+ce_weight: 0.5
+label_smoothing: 0.05
+num_classes: 2
+in_channels: 2
+encoder_weights: imagenet
+encoder_kwargs:
+  img_size: 224
+  strict_img_size: false

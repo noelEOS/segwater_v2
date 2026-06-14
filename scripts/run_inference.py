@@ -96,12 +96,15 @@ def build_model_and_load_checkpoint(cfg, device):
 
     logger.info(f"[MODEL] Building {arch} with {encoder} encoder ({classes} classes)...")
 
+    encoder_kwargs = cfg.model.get("encoder_kwargs", None)
+    encoder_kwargs = OmegaConf.to_container(encoder_kwargs, resolve=True) if encoder_kwargs else {}
     model = SegmentationModelFactory.build(
         arch=arch,
         encoder_name=encoder,
         encoder_weights=None,
         in_channels=in_channels,
         classes=classes,
+        **encoder_kwargs,
     )
 
     ckpt_path = cfg.inference.checkpoint_path

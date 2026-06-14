@@ -261,7 +261,18 @@ def parse_args(argv=None) -> argparse.Namespace:
         default=None,
         help="Root output directory (default: manifest parent dir / confusion_rasters)",
     )
-    p.add_argument("--threshold", type=float, default=0.5, help="Probability threshold (default: 0.5)")
+    p.add_argument("--threshold", type=float, default=0.5, help="Probability threshold (default: 0.5); ignored when --loo-summary is set")
+    p.add_argument(
+        "--loo-summary",
+        default=None,
+        metavar="CSV",
+        help="Path to loo_threshold_summary.csv; uses per-model LOO threshold instead of --threshold",
+    )
+    p.add_argument(
+        "--optimize-metric",
+        default="iou",
+        help="Which optimize_metric row to use from --loo-summary (default: iou)",
+    )
     p.add_argument(
         "--comparison",
         choices=["greater_than", "greater_equal"],
@@ -302,6 +313,19 @@ def main(argv=None) -> None:
         print(f"ERROR: manifest not found: {manifest_path}", file=sys.stderr)
         sys.exit(1)
 
+    loo_thresholds: dict[str, float] | None = None
+    if args.loo_summary:
+        loo_path = Path(args.loo_summary)
+        if not loo_path.exists():
+            print(f"ERROR: loo_summary not found: {loo_path}", file=sys.stderr)
+            sys.exit(1)
+        df_loo = pd.read_csv(loo_path)
+        df_loo_metric = df_loo[df_loo["optimize_metric"] == args.optimize_metric]
+        if df_loo_metric.empty:
+            print(f"ERROR: no rows for optimize_metric={args.optimize_metric!r} in {loo_path}", file=sys.stderr)
+            sys.exit(1)
+        loo_thresholds = dict(zip(df_loo_metric["model_name"], df_loo_metric["loo_selected_threshold_mean"]))
+
     output_dir = Path(args.output_dir) if args.output_dir else manifest_path.parent / "confusion_rasters"
     output_dir.mkdir(parents=True, exist_ok=True)
 
@@ -311,7 +335,10 @@ def main(argv=None) -> None:
     print(f"Manifest: {manifest_path}")
     print(f"Output dir: {output_dir}")
     print(f"Rows with status=success: {len(success_rows)} / {len(df)}")
-    print(f"Threshold: {args.comparison} {args.threshold}")
+    if loo_thresholds is not None:
+        print(f"Threshold mode: LOO (optimize_metric={args.optimize_metric}, {len(loo_thresholds)} models)")
+    else:
+        print(f"Threshold: {args.comparison} {args.threshold}")
 
     results = []
     for _, row in success_rows.iterrows():
@@ -320,7 +347,16 @@ def main(argv=None) -> None:
         reference_path = str(row["reference_path"])
         prediction_path = str(row["prediction_path"])
 
-        print(f"  {model} / {s1_id} ... ", end="", flush=True)
+        if loo_thresholds is not None:
+            if model not in loo_thresholds:
+                print(f"  SKIP {model} / {s1_id} — no LOO threshold available")
+                results.append({"model_name": model, "s1_id": s1_id, "status": "skipped_no_loo_threshold"})
+                continue
+            threshold = loo_thresholds[model]
+        else:
+            threshold = args.threshold
+
+        print(f"  {model} / {s1_id}  threshold={threshold:.4f} ... ", end="", flush=True)
         try:
             result = process_scene(
                 reference_path=reference_path,
@@ -330,7 +366,7 @@ def main(argv=None) -> None:
                 s1_id=s1_id,
                 reference_water_values=args.reference_water_values,
                 reference_nodata_values=args.reference_nodata_values,
-                probability_threshold=args.threshold,
+                probability_threshold=threshold,
                 probability_comparison=args.comparison,
                 resolution_atol=args.resolution_atol,
                 overwrite=args.overwrite,

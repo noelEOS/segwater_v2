@@ -6,6 +6,9 @@ data/raw/
 data/processed/
 notebooks/
 
+# Docs
+docs/
+
 # Checkpoints
 checkpoints/
 

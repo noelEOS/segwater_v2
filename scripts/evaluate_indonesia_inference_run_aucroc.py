@@ -282,6 +282,101 @@ def select_best_thresholds(df_threshold_summary: pd.DataFrame, optimize_metrics:
     return pd.DataFrame(rows)
 
 
+def compute_loo_threshold_evaluation(df_sweep: pd.DataFrame, optimize_metrics: list[str]) -> pd.DataFrame:
+    """For each held-out scene, select the best threshold on the remaining N-1 scenes, then evaluate on the held-out scene.
+
+    Output mirrors threshold_sweep.csv columns, plus optimize_metric and loo_selected_threshold.
+    """
+    if df_sweep.empty:
+        return pd.DataFrame()
+
+    model_cols = ["model_name", "prediction_type", "inference_mode"]
+    rows: list[dict[str, Any]] = []
+
+    for model_key, model_group in df_sweep.groupby(model_cols, sort=False, dropna=False):
+        if not isinstance(model_key, tuple):
+            model_key = (model_key,)
+        evaluation_ids = model_group["evaluation_id"].unique()
+
+        if len(evaluation_ids) < 2:
+            continue
+
+        for held_out_id in evaluation_ids:
+            train_group = model_group[model_group["evaluation_id"] != held_out_id]
+            held_out_group = model_group[model_group["evaluation_id"] == held_out_id]
+            train_by_threshold = train_group.groupby("threshold", sort=False)
+
+            for optimize_metric in optimize_metrics:
+                if optimize_metric not in train_group.columns:
+                    continue
+
+                train_means = (
+                    train_by_threshold[optimize_metric]
+                    .mean()
+                    .reset_index()
+                    .rename(columns={optimize_metric: "_mean"})
+                )
+                if train_means.empty:
+                    continue
+
+                best_threshold = float(
+                    train_means.sort_values(["_mean", "threshold"], ascending=[False, True]).iloc[0]["threshold"]
+                )
+
+                held_at_best = held_out_group[np.isclose(held_out_group["threshold"], best_threshold)]
+                if held_at_best.empty:
+                    continue
+
+                rows.append({
+                    **held_at_best.iloc[0].to_dict(),
+                    "optimize_metric": optimize_metric,
+                    "loo_selected_threshold": best_threshold,
+                })
+
+    return pd.DataFrame(rows)
+
+
+def summarize_loo_threshold_evaluation(df_loo: pd.DataFrame, metrics: list[str]) -> pd.DataFrame:
+    """Macro-average LOO metrics per model x optimize_metric.
+
+    Output mirrors threshold_summary.csv columns, with optimize_metric in place of threshold.
+    """
+    if df_loo.empty:
+        return pd.DataFrame()
+
+    group_cols = ["model_name", "prediction_type", "inference_mode", "optimize_metric", "comparison"]
+    rows: list[dict[str, Any]] = []
+    for group_key, group in df_loo.groupby(group_cols, sort=False, dropna=False):
+        if not isinstance(group_key, tuple):
+            group_key = (group_key,)
+        row: dict[str, Any] = {col: value for col, value in zip(group_cols, group_key)}
+        row["estimate_type"] = "loo_macro_average"
+        row["n_pairs"] = int(group["evaluation_id"].nunique())
+        row["loo_selected_threshold_mean"] = float(group["loo_selected_threshold"].mean())
+        row["loo_selected_threshold_std"] = float(group["loo_selected_threshold"].std(ddof=1)) if len(group) > 1 else np.nan
+        if "valid_pixels" in group.columns:
+            row["valid_pixels_total"] = int(group["valid_pixels"].sum())
+        if "reference_water_pixels" in group.columns:
+            row["reference_water_pixels_total"] = int(group["reference_water_pixels"].sum())
+        if "reference_land_pixels" in group.columns:
+            row["reference_land_pixels_total"] = int(group["reference_land_pixels"].sum())
+        if "prediction_water_pixels" in group.columns:
+            row["prediction_water_pixels_total"] = int(group["prediction_water_pixels"].sum())
+
+        for metric in metrics:
+            if metric not in group.columns:
+                continue
+            values = group[metric].dropna().to_numpy()
+            row[f"{metric}_mean"] = float(np.mean(values)) if len(values) else np.nan
+            row[f"{metric}_std_across_pairs"] = float(np.std(values, ddof=1)) if len(values) > 1 else np.nan
+            row[f"{metric}_ci_lower"] = float(np.percentile(values, 2.5)) if len(values) else np.nan
+            row[f"{metric}_ci_upper"] = float(np.percentile(values, 97.5)) if len(values) else np.nan
+            row[f"{metric}_min_pair"] = float(np.min(values)) if len(values) else np.nan
+            row[f"{metric}_max_pair"] = float(np.max(values)) if len(values) else np.nan
+        rows.append(row)
+    return pd.DataFrame(rows)
+
+
 def main() -> None:
     config_path = Path(sys.argv[1] if len(sys.argv) > 1 else "configs/evaluation/indonesia_inference_run_aucroc_semarang.yaml")
     cfg = load_config(config_path)
@@ -435,6 +530,8 @@ def main() -> None:
     df_threshold_sweep = pd.DataFrame(threshold_rows)
     df_threshold_summary = summarize_threshold_sweep(df_threshold_sweep, METRIC_NAMES) if threshold_sweep_enabled else pd.DataFrame()
     df_threshold_best = select_best_thresholds(df_threshold_summary, optimize_metrics) if threshold_sweep_enabled else pd.DataFrame()
+    df_loo = compute_loo_threshold_evaluation(df_threshold_sweep, optimize_metrics) if threshold_sweep_enabled else pd.DataFrame()
+    df_loo_summary = summarize_loo_threshold_evaluation(df_loo, METRIC_NAMES) if threshold_sweep_enabled else pd.DataFrame()
 
     auc_per_pair_csv = output_dir / "auc_per_pair.csv"
     metrics_summary_csv = output_dir / "metrics_summary.csv"
@@ -443,6 +540,8 @@ def main() -> None:
     threshold_sweep_csv = output_dir / "threshold_sweep.csv"
     threshold_summary_csv = output_dir / "threshold_summary.csv"
     threshold_best_summary_csv = output_dir / "threshold_best_summary.csv"
+    loo_evaluation_csv = output_dir / "loo_threshold_evaluation.csv"
+    loo_summary_csv = output_dir / "loo_threshold_summary.csv"
 
     df_auc.to_csv(auc_per_pair_csv, index=False)
     df_summary.to_csv(metrics_summary_csv, index=False)
@@ -452,6 +551,8 @@ def main() -> None:
         df_threshold_sweep.to_csv(threshold_sweep_csv, index=False)
         df_threshold_summary.to_csv(threshold_summary_csv, index=False)
         df_threshold_best.to_csv(threshold_best_summary_csv, index=False)
+        df_loo.to_csv(loo_evaluation_csv, index=False)
+        df_loo_summary.to_csv(loo_summary_csv, index=False)
 
     status_counts = df_manifest["status"].value_counts(dropna=False).to_dict() if not df_manifest.empty else {}
     auc_status_counts = df_auc["auc_status"].value_counts(dropna=False).to_dict() if not df_auc.empty and "auc_status" in df_auc.columns else {}
@@ -466,6 +567,8 @@ def main() -> None:
             "threshold_sweep_csv": str(threshold_sweep_csv),
             "threshold_summary_csv": str(threshold_summary_csv),
             "threshold_best_summary_csv": str(threshold_best_summary_csv),
+            "loo_evaluation_csv": str(loo_evaluation_csv),
+            "loo_summary_csv": str(loo_summary_csv),
         })
 
     metadata = {
@@ -507,7 +610,9 @@ def main() -> None:
     if threshold_sweep_enabled:
         print(f"Threshold sweep: {threshold_sweep_csv}")
         print(f"Threshold summary: {threshold_summary_csv}")
-        print(f"Threshold best summary: {threshold_best_summary_csv}")
+        print(f"Threshold best summary (in-sample): {threshold_best_summary_csv}")
+        print(f"LOO threshold evaluation: {loo_evaluation_csv}")
+        print(f"LOO threshold summary: {loo_summary_csv}")
     print(f"Status counts: {status_counts}")
     print(f"AUC status counts: {auc_status_counts}")
 

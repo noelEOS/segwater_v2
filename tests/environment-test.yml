@@ -1,0 +1,28 @@
+# Conda environment for running the test suite (tests/).
+#
+# Pinned to the versions used in the project's working "eda" env so tests
+# exercise the same library behaviour as training/inference.
+#
+# Create with:
+#   conda env create -f tests/environment-test.yml
+# Then run:
+#   conda activate segwater-test
+#   pytest        # from the repo root
+name: segwater-test
+channels:
+  - pytorch
+  - conda-forge
+dependencies:
+  - python=3.11
+  - pytorch=2.6.0
+  - numpy=2.4.*
+  - tqdm
+  - pip
+  - pip:
+      # Installed via pip to match the project's existing (pip-sourced) versions.
+      - pytest>=8,<9
+      - torchmetrics
+      - segmentation-models-pytorch==0.5.0
+      - timm==1.0.27
+      - omegaconf==2.3.0
+      - optuna

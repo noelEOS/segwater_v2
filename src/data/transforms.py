@@ -3,7 +3,7 @@ import torch
 class CoastalAug:
     """Torch-only geometric augs: random flips and 90 degree rotations."""
 
-    def __init__(self, hflip_p=0.5, vflip_p=0.0, rot90_k_prob=0.5):
+    def __init__(self, hflip_p=0.5, vflip_p=0.5, rot90_k_prob=0.0):
         self.hflip_p = hflip_p
         self.vflip_p = vflip_p
         self.rot90_k_prob = rot90_k_prob

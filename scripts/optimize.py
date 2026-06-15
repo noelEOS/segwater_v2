@@ -133,7 +133,8 @@ def objective(trial: optuna.Trial, cfg: DictConfig):
         use_amp=cfg.trainer.mixed_precision,
         precision=cfg.trainer.get("precision", "fp16"),
         gradient_clip_val=cfg.trainer.gradient_clip_val,
-        num_classes=cfg.model.num_classes
+        num_classes=cfg.model.num_classes,
+        accumulate_grad_batches=cfg.trainer.get("accumulate_grad_batches", 1),
     )
     
     best_iou,_ = trainer.fit(

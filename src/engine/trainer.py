@@ -21,22 +21,24 @@ class SpectralTrainer:
         use_amp: bool = True,
         gradient_clip_val: float = 1.0,
         num_classes: int = 2,
-        ignore_index: int = 255, 
+        ignore_index: int = 255,
         precision: str = "fp16",
-        arch: str = "arch",      
-        encoder: str = "encoder", 
-        seed: int = 42,  
+        arch: str = "arch",
+        encoder: str = "encoder",
+        seed: int = 42,
+        accumulate_grad_batches: int = 1,
     ):
         self.model = model.to(device)
-        self.arch = arch         
-        self.encoder = encoder   
-        self.seed = seed         
+        self.arch = arch
+        self.encoder = encoder
+        self.seed = seed
         self.optimizer = optimizer
         self.scheduler = scheduler
         self.loss_fn = loss_fn.to(device)
         self.device = device
         self.use_amp = use_amp
         self.gradient_clip_val = gradient_clip_val
+        self.accumulate_grad_batches = max(1, int(accumulate_grad_batches))
 
         # Resolve the torch dtype
         self.amp_dtype = torch.bfloat16 if precision == "bf16" else torch.float16
@@ -49,6 +51,7 @@ class SpectralTrainer:
         logger.info(f"Mixed Precision:   {self.use_amp}")
         logger.info(f"AMP Dtype:         {self.amp_dtype}")
         logger.info(f"Gradient Clipping: {self.gradient_clip_val}")
+        logger.info(f"Grad Accumulation: {self.accumulate_grad_batches}")
         logger.info(f"Scaler Enabled:    {scaler_enabled}")
         logger.info("="*40)
 
@@ -80,61 +83,78 @@ class SpectralTrainer:
 
             train_iterator = iter(train_dataloader)
             
+            # max_steps / val_check_interval are counted in OPTIMIZER steps. Each
+            # optimizer step consumes `accumulate_grad_batches` micro-batches, so
+            # an accumulated run sees the same data / does the same number of
+            # weight updates / follows the same LR schedule as a non-accumulated
+            # run with the same max_steps and the equivalent (accum x) batch size.
+            # With accumulate_grad_batches == 1 this is identical to the prior
+            # behaviour (one optimizer step per micro-batch).
+            accum = self.accumulate_grad_batches
+
             while global_step < max_steps:
                 self.model.train()
                 self.train_metrics.reset()
                 total_loss = 0.0
-                num_batches = 0
-                
+                num_opt_steps = 0
+
                 with tqdm(total=val_check_interval, desc=f"Train [Steps {global_step} - {global_step+val_check_interval}]", leave=False) as pbar:
-                    while num_batches < val_check_interval and global_step < max_steps:
-                        try:
-                            batch = next(train_iterator)
-                        except StopIteration:
-                            train_iterator = iter(train_dataloader)
-                            batch = next(train_iterator)
-                            
-                        x = batch["pixel_values"].to(self.device, non_blocking=True)
-                        y = batch["labels"].to(self.device, non_blocking=True)
-                        
+                    while num_opt_steps < val_check_interval and global_step < max_steps:
+                        # Accumulate gradients over `accum` micro-batches, then take
+                        # a single optimizer step (== one global_step).
                         self.optimizer.zero_grad(set_to_none=True)
-                        
-                        with torch.autocast(device_type=self.device.type, enabled=self.use_amp, dtype=self.amp_dtype):
-                            logits = self.model(x)
-                            loss_dict = self.loss_fn(logits, y)
-                            loss = loss_dict["loss"]
-                            
-                        self.scaler.scale(loss).backward()
-                        
+                        step_loss = 0.0
+
+                        for _ in range(accum):
+                            try:
+                                batch = next(train_iterator)
+                            except StopIteration:
+                                train_iterator = iter(train_dataloader)
+                                batch = next(train_iterator)
+
+                            x = batch["pixel_values"].to(self.device, non_blocking=True)
+                            y = batch["labels"].to(self.device, non_blocking=True)
+
+                            with torch.autocast(device_type=self.device.type, enabled=self.use_amp, dtype=self.amp_dtype):
+                                logits = self.model(x)
+                                loss_dict = self.loss_fn(logits, y)
+                                loss = loss_dict["loss"]
+
+                            # Divide by accum so summed gradients average over the
+                            # window (matches a single large-batch step).
+                            self.scaler.scale(loss / accum).backward()
+
+                            preds = torch.argmax(logits, dim=1)
+                            self.train_metrics.update(preds, y)
+                            step_loss += loss.item() / accum
+
                         if self.gradient_clip_val > 0.0:
                             self.scaler.unscale_(self.optimizer)
                             torch.nn.utils.clip_grad_norm_(self.model.parameters(), self.gradient_clip_val)
-                            
+
                         self.scaler.step(self.optimizer)
                         self.scaler.update()
-                        
+
                         if self.scheduler is not None:
                             self.scheduler.step()
-                            
-                        preds = torch.argmax(logits, dim=1)
-                        self.train_metrics.update(preds, y)
-                        total_loss += loss.item()
+
+                        total_loss += step_loss
 
                         current_lr = self.optimizer.param_groups[0]['lr']
                         if wandb.run is not None:
                             wandb.log({
                                 "global_step": global_step,
-                                "train/step_loss": loss.item(),
+                                "train/step_loss": step_loss,
                                 "train/learning_rate": current_lr
                             })
 
-                        num_batches += 1
+                        num_opt_steps += 1
                         global_step += 1
-                        
+
                         pbar.update(1)
                     
                 train_metrics_dict = self.train_metrics.compute()
-                train_loss = total_loss / max(1, num_batches)
+                train_loss = total_loss / max(1, num_opt_steps)
                 
                 val_metrics_dict = self.val_epoch(val_dataloader)
                 val_miou = val_metrics_dict["mIoU"]

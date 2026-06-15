@@ -91,7 +91,8 @@ def main(cfg: DictConfig):
         num_classes=cfg.model.num_classes,
         arch=cfg.model.arch,
         encoder=cfg.model.encoder_name,
-        seed=cfg.seed
+        seed=cfg.seed,
+        accumulate_grad_batches=cfg.trainer.get("accumulate_grad_batches", 1),
     )
     
     os.makedirs(cfg.output_dir, exist_ok=True)

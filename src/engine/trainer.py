@@ -1,3 +1,5 @@
+import math
+
 import torch
 import torch.nn as nn
 import optuna
@@ -158,6 +160,18 @@ class SpectralTrainer:
                 
                 val_metrics_dict = self.val_epoch(val_dataloader)
                 val_miou = val_metrics_dict["mIoU"]
+
+                # Guard against a non-finite mIoU. macro JaccardIndex returns NaN
+                # when a class has zero union over the whole val set (e.g. a
+                # degenerate trial that predicts only background early on). NaN
+                # propagates into max() and, worse, into Optuna's RDB commit
+                # (trial.report / the returned objective), which raises a
+                # StorageInternalError and kills the whole study. Treat a
+                # non-finite score as the worst possible value so the trial is
+                # simply pruned/ranked last instead.
+                if not math.isfinite(val_miou):
+                    logger.warning(f"Non-finite val mIoU ({val_miou}) at step {global_step}; treating as 0.0")
+                    val_miou = 0.0
 
                 best_val_miou = max(best_val_miou, val_miou)
                 

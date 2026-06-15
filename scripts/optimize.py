@@ -63,6 +63,8 @@ def objective(trial: optuna.Trial, cfg: DictConfig):
         batch_size=cfg.data.get("batch_size", 256),
         val_batch_size=cfg.data.get("val_batch_size", 256),
         num_workers=cfg.data.num_workers,
+        pin_memory=cfg.data.get("pin_memory", True),
+        persistent_workers=cfg.data.get("persistent_workers", True),
         augment=cfg.data.augment
     )
     datamodule.setup()

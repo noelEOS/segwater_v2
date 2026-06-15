@@ -1,3 +1,4 @@
+import gc
 import os
 from typing import Optional
 from torch.utils.data import DataLoader
@@ -38,6 +39,10 @@ class CoastalDataModule:
         self.train_ds = None
         self.val_ds = None
         self.test_ds = None
+        # Track every DataLoader handed out so teardown can join their worker
+        # processes (otherwise persistent workers from one Optuna trial outlive
+        # the trial and accumulate across the sweep).
+        self._loaders = []
 
     def setup(self):
         """Initializes dataset objects (but delays memmap opening per process)."""
@@ -62,8 +67,10 @@ class CoastalDataModule:
         )
         if self.num_workers > 0:
             kwargs["prefetch_factor"] = 2
-            
-        return DataLoader(dataset, **kwargs)
+
+        loader = DataLoader(dataset, **kwargs)
+        self._loaders.append(loader)
+        return loader
 
     def train_dataloader(self):
         return self._dl(self.train_ds, self.batch_size, shuffle=True)
@@ -75,7 +82,28 @@ class CoastalDataModule:
         return self._dl(self.test_ds, self.val_batch_size, shuffle=False)
 
     def teardown(self):
-        """Clean up open memmaps."""
+        """Release DataLoader workers and close open memmaps.
+
+        Persistent workers keep their processes (and memmap file handles) alive
+        for the lifetime of the DataLoader. In an Optuna sweep a fresh
+        DataModule / set of loaders is built every trial, so without an explicit
+        shutdown those worker pools leak across trials and can eventually
+        deadlock. Join the workers, drop loader references, then close memmaps.
+        """
+        for loader in self._loaders:
+            # Shut down the live iterator's worker pool if one exists. DataLoader
+            # exposes the persistent-workers iterator as `_iterator`.
+            iterator = getattr(loader, "_iterator", None)
+            if iterator is not None:
+                shutdown = getattr(iterator, "_shutdown_workers", None)
+                if callable(shutdown):
+                    shutdown()
+                loader._iterator = None
+        self._loaders.clear()
+        # Force collection so any DataLoader whose iterator we did not hold is
+        # finalized (its __del__ joins remaining workers) before the next trial.
+        gc.collect()
+
         for ds in (self.train_ds, self.val_ds, self.test_ds):
             if isinstance(ds, CoastalMemmapDataset):
                 ds.close()

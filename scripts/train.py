@@ -29,6 +29,8 @@ def main(cfg: DictConfig):
         batch_size=cfg.data.batch_size,
         val_batch_size=cfg.data.val_batch_size,
         num_workers=cfg.data.num_workers,
+        pin_memory=cfg.data.get("pin_memory", True),
+        persistent_workers=cfg.data.get("persistent_workers", True),
         augment=cfg.data.augment
     )
     datamodule.setup()

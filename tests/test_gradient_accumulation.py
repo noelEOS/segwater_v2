@@ -10,6 +10,9 @@ The LR-schedule assertion is the one that guards the scheduler against silently
 desynchronising from the optimizer step count under accumulation.
 """
 
+import sys
+import types
+
 import pytest
 import torch
 import torch.nn as nn
@@ -74,9 +77,20 @@ class _NoopMetrics:
 
 
 @pytest.fixture(autouse=True)
-def _stub_metrics(monkeypatch):
-    """Replace SegmentationMetrics with a no-op so tests don't need torchmetrics."""
+def _isolate_trainer(monkeypatch):
+    """Make SpectralTrainer.fit runnable as a unit test:
+
+    - swap SegmentationMetrics for a no-op (avoids torchmetrics state),
+    - inject a stub `wandb` so the in-function `import wandb` resolves without a
+      real W&B install / login. fit() only reads `wandb.run` (None disables
+      logging) and may call `wandb.log`.
+    """
     monkeypatch.setattr(trainer_module, "SegmentationMetrics", _NoopMetrics)
+
+    wandb_stub = types.ModuleType("wandb")
+    wandb_stub.run = None
+    wandb_stub.log = lambda *a, **k: None
+    monkeypatch.setitem(sys.modules, "wandb", wandb_stub)
 
 
 def _run(accum, batch_size, max_steps, val_check_interval, warmup=3):

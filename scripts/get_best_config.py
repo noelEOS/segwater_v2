@@ -74,8 +74,12 @@ def main():
         print("No completed trials found.", file=sys.stderr)
         sys.exit(1)
 
+    params = dict(best_trial.params)
+    if "model.dice_weight" in params:
+        params["model.ce_weight"] = 1 - params["model.dice_weight"]
+
     if args.json:
-        print(json.dumps(best_trial.params, indent=2))
+        print(json.dumps(params, indent=2))
         return
 
     print("\n" + "=" * 60)
@@ -87,7 +91,7 @@ def main():
     print(f"  Datetime   : {best_trial.datetime_complete}")
     print("-" * 60)
     print("  PARAMS:")
-    for k, v in sorted(best_trial.params.items()):
+    for k, v in sorted(params.items()):
         print(f"    {k:<35} {v}")
     if best_trial.user_attrs:
         print("-" * 60)

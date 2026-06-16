@@ -7,3 +7,11 @@ num_workers: 8
 pin_memory: true
 persistent_workers: true
 augment: false
+# Per-aug probabilities forwarded to CoastalAug when augment: true.
+# These defaults match CoastalAug's signature, so flipping augment to true
+# without changing them reproduces the previous hardcoded augmentation.
+# Enable rotation, e.g., with: data.augment=true data.aug.rot90_k_prob=0.5
+aug:
+  hflip_p: 0.5
+  vflip_p: 0.5
+  rot90_k_prob: 0.0

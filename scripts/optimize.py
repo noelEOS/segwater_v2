@@ -65,7 +65,8 @@ def objective(trial: optuna.Trial, cfg: DictConfig):
         num_workers=cfg.data.num_workers,
         pin_memory=cfg.data.get("pin_memory", True),
         persistent_workers=cfg.data.get("persistent_workers", True),
-        augment=cfg.data.augment
+        augment=cfg.data.augment,
+        aug_params=cfg.data.get("aug", {}),
     )
     datamodule.setup()
     

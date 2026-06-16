@@ -5,6 +5,16 @@ class SegmentationModelFactory:
     @staticmethod
     def build(arch: str, encoder_name: str, in_channels: int, classes: int,  encoder_weights: Optional[str] = "imagenet", **encoder_kwargs):
         a = arch.lower()
+        if a == "dinov3-linear":
+            from src.models.dinov3 import DINOv3LinearSegmentation
+            hf_model_name = encoder_kwargs.pop("hf_model_name", encoder_name)
+            patch_size = encoder_kwargs.pop("patch_size", 16)
+            return DINOv3LinearSegmentation(
+                hf_model_name=hf_model_name,
+                num_classes=classes,
+                in_channels=in_channels,
+                patch_size=patch_size,
+            )
         if a == "unet":
             return smp.Unet(encoder_name=encoder_name, encoder_weights=encoder_weights, in_channels=in_channels, classes=classes, **encoder_kwargs)
         elif a in ("unetplusplus", "unet++"):

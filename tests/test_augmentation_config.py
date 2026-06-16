@@ -87,19 +87,30 @@ def test_missing_aug_key_falls_back_to_defaults():
     assert aug.rot90_k_prob == CoastalAug().rot90_k_prob
 
 
-def test_rotation_actually_rotates_when_enabled():
-    # Functional check: rot90_k_prob=1.0 must change a non-symmetric input.
+def test_rotation_always_rotates_at_prob_one():
+    # With rot90_k_prob=1.0 and flips off, EVERY sample must be rotated: k is
+    # drawn from {1,2,3}, so there is no k=0 no-op. This locks in that
+    # rot90_k_prob is the true rotation probability.
     torch.manual_seed(0)
     aug = CoastalAug(hflip_p=0.0, vflip_p=0.0, rot90_k_prob=1.0)
     x = torch.arange(2 * 4 * 4, dtype=torch.float32).reshape(2, 4, 4)
     y = torch.arange(4 * 4).reshape(4, 4)
-    # Retry across k draws; k can be 0 (a no-op rotation). Assert that at least
-    # one draw produces a changed tensor, proving the rotation path is live.
-    changed = False
-    for _ in range(20):
+    for _ in range(200):
         xr, yr = aug(x.clone(), y.clone())
-        if not torch.equal(xr, x):
-            changed = True
-            assert xr.shape == x.shape and yr.shape == y.shape
-            break
-    assert changed, "rot90_k_prob=1.0 never altered the input"
+        assert not torch.equal(xr, x), "rot90_k_prob=1.0 left a sample unrotated"
+        assert xr.shape == x.shape and yr.shape == y.shape
+
+
+def test_rot90_k_prob_is_effective_rotation_rate():
+    # The per-sample rotation rate should match rot90_k_prob (not gate * 3/4).
+    # With flips off, P(rotated) ~ rot90_k_prob within sampling tolerance.
+    torch.manual_seed(0)
+    p = 0.5
+    aug = CoastalAug(hflip_p=0.0, vflip_p=0.0, rot90_k_prob=p)
+    x = torch.arange(2 * 4 * 4, dtype=torch.float32).reshape(2, 4, 4)
+    y = torch.zeros(4, 4, dtype=torch.long)
+    n = 4000
+    rotated = sum(not torch.equal(aug(x.clone(), y.clone())[0], x) for _ in range(n))
+    rate = rotated / n
+    # ~5 SD tolerance for n=4000, p=0.5 (SD of the rate ~ 0.0079).
+    assert abs(rate - p) < 0.04, f"effective rotation rate {rate:.3f} != {p}"

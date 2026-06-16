@@ -27,43 +27,43 @@ sweep:
 
   checkpoints:
     - name: "unet_resnet50"
-      checkpoint_path: "outputs/stage2/unet_resnet50/09-44-49_s42/unet_resnet50_s42_step39600_miou0.9379.pth"
+      checkpoint_path: "outputs/stage2/unet_resnet50_s42/12-13-00_s42/unet_resnet50_s42_step31200_miou0.9379.pth"
       model:
         arch: "unet"
         encoder_name: "resnet50"
 
     - name: "unetplusplus_resnet50"
-      checkpoint_path: "outputs/stage2/unetplusplus_resnet50/16-24-30_s42/unetplusplus_resnet50_s42_step36000_miou0.9383.pth"
+      checkpoint_path: "outputs/stage2/unetplusplus_resnet50_s42/13-06-38_s42/unetplusplus_resnet50_s42_step27600_miou0.9380.pth"
       model:
         arch: "unetplusplus"
         encoder_name: "resnet50"
 
     - name: "deeplabv3plus_resnet50"
-      checkpoint_path: "outputs/stage2/deeplabv3plus_resnet50/18-03-26_s42/deeplabv3plus_resnet50_s42_step38400_miou0.9387.pth"
+      checkpoint_path: "outputs/stage2/deeplabv3plus_resnet50_s42/02-01-56_s42/deeplabv3plus_resnet50_s42_step31200_miou0.9391.pth"
       model:
         arch: "deeplabv3plus"
         encoder_name: "resnet50"
 
     - name: "dpt_vit_b_16"
-      checkpoint_path: "outputs/stage2/dpt_tu-vit_base_patch16_224.mae/11-41-26_s42/dpt_tu-vit_base_patch16_224.mae_s42_step39600_miou0.9365.pth"
+      checkpoint_path: "outputs/stage2/dpt_tu-vit_base_patch16_224.mae_s42/14-56-12_s42/dpt_tu-vit_base_patch16_224.mae_s42_step34800_miou0.9371.pth"
       model:
         arch: "dpt"
         encoder_name: "tu-vit_base_patch16_224.mae"
 
     - name: "segformer_mit_b4"
-      checkpoint_path: "outputs/stage2/segformer_mit_b4/14-10-54_s42/segformer_mit_b4_s42_step40340_miou0.9504.pth"
+      checkpoint_path: "outputs/stage2/segformer_mit_b4_s42/01-20-41_s42/segformer_mit_b4_s42_step40340_miou0.9506.pth"
       model:
         arch: "segformer"
         encoder_name: "mit_b4"
 
     - name: "upernet_swin_base_224"
-      checkpoint_path: "outputs/stage2/upernet_tu-swin_base_patch4_window7_224/00-52-13_s42/upernet_tu-swin_base_patch4_window7_224_s42_step40340_miou0.9499.pth"
+      checkpoint_path: "outputs/stage2/upernet_tu-swin_base_patch4_window7_224_s42/17-26-54_s42/upernet_tu-swin_base_patch4_window7_224_s42_step40340_miou0.9506.pth"
       model:
         arch: "upernet"
         encoder_name: "tu-swin_base_patch4_window7_224"
 
     - name: "upernet_tu-convnextv2_base"
-      checkpoint_path: "outputs/stage2/upernet_tu-convnextv2_base/15-29-03_s42/upernet_tu-convnextv2_base_s42_step39600_miou0.9533.pth"
+      checkpoint_path: "outputs/stage2/upernet_tu-convnextv2_base_s42/17-37-52_s42/upernet_tu-convnextv2_base_s42_step36000_miou0.9536.pth"
       model:
         arch: "upernet"
         encoder_name: "tu-convnextv2_base"

@@ -40,6 +40,7 @@ def _make_model(
     num_classes: int = 2,
     in_channels: int = 2,
     num_register_tokens: int = 4,
+    freeze_strategy: str = "full",
 ) -> DINOv3LinearSegmentation:
     """Build a DINOv3LinearSegmentation from random weights (no Hub download)."""
     cfg = _minimal_config(num_register_tokens=num_register_tokens)
@@ -49,9 +50,11 @@ def _make_model(
     nn.Module.__init__(model)
     model.patch_size = 16
     model.num_register_tokens = num_register_tokens
+    model.freeze_strategy = freeze_strategy
     model.backbone = backbone
     _adapt_patch_embedding(model.backbone, in_channels)
-    model._freeze_backbone()
+    if freeze_strategy == "full":
+        model._freeze_backbone()
     model.head = nn.Conv2d(cfg.hidden_size, num_classes, kernel_size=1)
     return model
 
@@ -104,13 +107,104 @@ class TestPatchEmbeddingAdaptation:
 
 
 # ---------------------------------------------------------------------------
+# Tests: freeze_strategy="full" (linear probe)
+# ---------------------------------------------------------------------------
+
+class TestFreezeStrategyFull:
+
+    def test_backbone_is_frozen(self):
+        model = _make_model(freeze_strategy="full")
+        for name, param in model.backbone.named_parameters():
+            assert not param.requires_grad, f"Backbone param {name!r} is not frozen"
+
+    def test_head_is_trainable(self):
+        model = _make_model(freeze_strategy="full")
+        for name, param in model.head.named_parameters():
+            assert param.requires_grad, f"Head param {name!r} is not trainable"
+
+    def test_trainable_parameters_only_head(self):
+        model = _make_model(freeze_strategy="full")
+        trainable = model.trainable_parameters
+        head_params = list(model.head.parameters())
+        assert len(trainable) == len(head_params)
+        for t, h in zip(trainable, head_params):
+            assert t is h
+
+    def test_backbone_stays_in_eval_during_train_mode(self):
+        model = _make_model(freeze_strategy="full")
+        model.train()
+        assert not model.backbone.training, "Backbone should stay in eval mode"
+
+    def test_no_gradient_flows_to_backbone(self):
+        model = _make_model(num_classes=2, in_channels=2, freeze_strategy="full")
+        model.train()
+        x = _random_input(B=1, C=2)
+        out = model(x)
+        out.sum().backward()
+        for name, param in model.backbone.named_parameters():
+            assert param.grad is None, f"Backbone param {name!r} has gradients"
+
+
+# ---------------------------------------------------------------------------
+# Tests: freeze_strategy="none" (full fine-tuning)
+# ---------------------------------------------------------------------------
+
+class TestFreezeStrategyNone:
+
+    def test_all_backbone_params_trainable(self):
+        model = _make_model(freeze_strategy="none")
+        for name, param in model.backbone.named_parameters():
+            assert param.requires_grad, f"Backbone param {name!r} should be trainable"
+
+    def test_backbone_in_train_mode(self):
+        model = _make_model(freeze_strategy="none")
+        model.train()
+        assert model.backbone.training, "Backbone should be in train mode"
+
+    def test_gradients_flow_to_backbone(self):
+        model = _make_model(num_classes=2, in_channels=2, freeze_strategy="none")
+        model.train()
+        x = _random_input(B=1, C=2)
+        out = model(x)
+        out.sum().backward()
+        backbone_params_with_grad = [
+            name for name, p in model.backbone.named_parameters()
+            if p.grad is not None
+        ]
+        assert len(backbone_params_with_grad) > 0, "No backbone gradients found"
+
+    def test_parameter_groups_lr_values(self):
+        """Head must receive base_lr; backbone must receive base_lr * scale."""
+        model = _make_model(freeze_strategy="none")
+        groups = model.parameter_groups(base_lr=1e-3, backbone_lr_scale=0.1)
+        assert len(groups) == 2
+        head_group, backbone_group = groups
+        assert head_group["lr"] == pytest.approx(1e-3)
+        assert backbone_group["lr"] == pytest.approx(1e-4)
+
+    def test_parameter_groups_cover_all_params(self):
+        """parameter_groups must cover every parameter exactly once."""
+        model = _make_model(freeze_strategy="none")
+        groups = model.parameter_groups(base_lr=1e-3)
+        grouped_ids = {id(p) for g in groups for p in g["params"]}
+        all_ids = {id(p) for p in model.parameters()}
+        assert grouped_ids == all_ids
+
+    def test_parameter_groups_head_params_correct(self):
+        model = _make_model(freeze_strategy="none")
+        groups = model.parameter_groups(base_lr=1e-3)
+        head_group_ids = {id(p) for p in groups[0]["params"]}
+        expected_ids = {id(p) for p in model.head.parameters()}
+        assert head_group_ids == expected_ids
+
+
+# ---------------------------------------------------------------------------
 # Tests: forward pass
 # ---------------------------------------------------------------------------
 
-class TestDINOv3LinearSegmentation:
+class TestForward:
 
     def test_output_shape_2ch_input(self):
-        """Logits must be (B, num_classes, H, W) for 2-channel SAR input."""
         model = _make_model(num_classes=2, in_channels=2)
         x = _random_input(B=2, C=2)
         with torch.no_grad():
@@ -131,89 +225,65 @@ class TestDINOv3LinearSegmentation:
             out = model(x)
         assert out.shape == (1, 2, 224, 224)
 
-    # ---------------------------------------------------------------------------
-    # Tests: frozen backbone / trainable head
-    # ---------------------------------------------------------------------------
 
-    def test_backbone_is_frozen(self):
-        """No backbone parameter should require gradients."""
-        model = _make_model()
-        for name, param in model.backbone.named_parameters():
-            assert not param.requires_grad, f"Backbone param {name!r} is not frozen"
+# ---------------------------------------------------------------------------
+# Tests: factory integration
+# ---------------------------------------------------------------------------
 
-    def test_head_is_trainable(self):
-        model = _make_model()
-        for name, param in model.head.named_parameters():
-            assert param.requires_grad, f"Head param {name!r} is not trainable"
+class TestFactory:
 
-    def test_trainable_parameters_only_head(self):
-        model = _make_model()
-        trainable = model.trainable_parameters
-        head_params = list(model.head.parameters())
-        assert len(trainable) == len(head_params)
-        for t, h in zip(trainable, head_params):
-            assert t is h
-
-    def test_backbone_stays_in_eval_during_train_mode(self):
-        model = _make_model()
-        model.train()
-        assert not model.backbone.training, "Backbone should stay in eval mode"
-
-    def test_no_gradient_flows_to_backbone(self):
-        """Backward pass must not accumulate gradients on backbone weights."""
-        model = _make_model(num_classes=2, in_channels=2)
-        model.train()
-        x = _random_input(B=1, C=2)
-        out = model(x)
-        out.sum().backward()
-        for name, param in model.backbone.named_parameters():
-            assert param.grad is None, f"Backbone param {name!r} has gradients"
-
-    # ---------------------------------------------------------------------------
-    # Tests: factory integration
-    # ---------------------------------------------------------------------------
-
-    def test_factory_returns_dinov3_model(self):
-        """SegmentationModelFactory with arch='dinov3-linear' must return our wrapper."""
+    def _patched_build(self, backbone, **kwargs):
         from src.models.factory import SegmentationModelFactory
-
-        cfg = _minimal_config()
-        backbone = DINOv3ViTModel(cfg)
-
         original = DINOv3ViTModel.from_pretrained
         DINOv3ViTModel.from_pretrained = classmethod(lambda cls, *a, **kw: backbone)
         try:
-            model = SegmentationModelFactory.build(
-                arch="dinov3-linear",
-                encoder_name="facebook/dinov3-vits16-pretrain-lvd1689m",
-                in_channels=2,
-                classes=2,
-            )
+            return SegmentationModelFactory.build(**kwargs)
         finally:
             DINOv3ViTModel.from_pretrained = original
 
+    def test_factory_returns_dinov3_model(self):
+        cfg = _minimal_config()
+        model = self._patched_build(
+            DINOv3ViTModel(cfg),
+            arch="dinov3-linear",
+            encoder_name="facebook/dinov3-vits16-pretrain-lvd1689m",
+            in_channels=2,
+            classes=2,
+        )
         assert isinstance(model, DINOv3LinearSegmentation)
 
     def test_factory_passes_in_channels(self):
-        """Factory must wire in_channels through so patch embedding is adapted."""
-        from src.models.factory import SegmentationModelFactory
-
         cfg = _minimal_config()
-        backbone = DINOv3ViTModel(cfg)
-
-        original = DINOv3ViTModel.from_pretrained
-        DINOv3ViTModel.from_pretrained = classmethod(lambda cls, *a, **kw: backbone)
-        try:
-            model = SegmentationModelFactory.build(
-                arch="dinov3-linear",
-                encoder_name="facebook/dinov3-vits16-pretrain-lvd1689m",
-                in_channels=2,
-                classes=2,
-            )
-        finally:
-            DINOv3ViTModel.from_pretrained = original
-
-        proj = model.backbone.embeddings.patch_embeddings
-        assert proj.weight.shape[1] == 2, (
-            f"Patch embedding should have 2 input channels, got {proj.weight.shape[1]}"
+        model = self._patched_build(
+            DINOv3ViTModel(cfg),
+            arch="dinov3-linear",
+            encoder_name="facebook/dinov3-vits16-pretrain-lvd1689m",
+            in_channels=2,
+            classes=2,
         )
+        proj = model.backbone.embeddings.patch_embeddings
+        assert proj.weight.shape[1] == 2
+
+    def test_factory_default_freeze_strategy_is_none(self):
+        """Default freeze_strategy from factory must be 'none' (full fine-tuning)."""
+        cfg = _minimal_config()
+        model = self._patched_build(
+            DINOv3ViTModel(cfg),
+            arch="dinov3-linear",
+            encoder_name="facebook/dinov3-vits16-pretrain-lvd1689m",
+            in_channels=2,
+            classes=2,
+        )
+        assert model.freeze_strategy == "none"
+
+    def test_factory_freeze_strategy_override(self):
+        cfg = _minimal_config()
+        model = self._patched_build(
+            DINOv3ViTModel(cfg),
+            arch="dinov3-linear",
+            encoder_name="facebook/dinov3-vits16-pretrain-lvd1689m",
+            in_channels=2,
+            classes=2,
+            freeze_strategy="full",
+        )
+        assert model.freeze_strategy == "full"

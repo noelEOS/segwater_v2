@@ -86,10 +86,17 @@ def objective(trial: optuna.Trial, cfg: DictConfig):
         label_smoothing=cfg.model.label_smoothing
     )
     
+    if hasattr(model, "parameter_groups"):
+        param_groups = model.parameter_groups(
+            base_lr=cfg.trainer.base_learning_rate,
+            backbone_lr_scale=cfg.trainer.get("backbone_lr_scale", 0.1),
+        )
+    else:
+        param_groups = model.parameters()
     optimizer = torch.optim.AdamW(
-        model.parameters(), 
-        lr=cfg.trainer.base_learning_rate, 
-        weight_decay=cfg.trainer.weight_decay
+        param_groups,
+        lr=cfg.trainer.base_learning_rate,
+        weight_decay=cfg.trainer.weight_decay,
     )
     
     train_dl = datamodule.train_dataloader()

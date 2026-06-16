@@ -9,11 +9,13 @@ class SegmentationModelFactory:
             from src.models.dinov3 import DINOv3LinearSegmentation
             hf_model_name = encoder_kwargs.pop("hf_model_name", encoder_name)
             patch_size = encoder_kwargs.pop("patch_size", 16)
+            freeze_strategy = encoder_kwargs.pop("freeze_strategy", "none")
             return DINOv3LinearSegmentation(
                 hf_model_name=hf_model_name,
                 num_classes=classes,
                 in_channels=in_channels,
                 patch_size=patch_size,
+                freeze_strategy=freeze_strategy,
             )
         if a == "unet":
             return smp.Unet(encoder_name=encoder_name, encoder_weights=encoder_weights, in_channels=in_channels, classes=classes, **encoder_kwargs)

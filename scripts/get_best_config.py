@@ -75,8 +75,10 @@ def main():
         sys.exit(1)
 
     params = dict(best_trial.params)
-    if "model.dice_weight" in params:
-        params["model.ce_weight"] = 1 - params["model.dice_weight"]
+    dice_key = next((k for k in params if "dice_weight" in k), None)
+    if dice_key is not None:
+        ce_key = dice_key.replace("dice_weight", "ce_weight")
+        params[ce_key] = 1 - params[dice_key]
 
     if args.json:
         print(json.dumps(params, indent=2))

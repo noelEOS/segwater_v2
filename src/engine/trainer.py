@@ -12,6 +12,28 @@ import logging
 
 logger = logging.getLogger(__name__)
 
+
+def compute_total_steps(len_train_dl: int, epochs: int, accumulate_grad_batches: int) -> int:
+    """Optimizer-step budget for a stage-2 run.
+
+    ``len_train_dl`` counts micro-batches per epoch, but ``max_steps`` and the
+    LR scheduler count OPTIMIZER steps, and SpectralTrainer takes one optimizer
+    step per ``accumulate_grad_batches`` micro-batches. So the optimizer-step
+    budget per epoch is ``len_train_dl // accum``.
+
+    Invariants this guarantees:
+      * accum == 1 reproduces the previous ``epochs * len_train_dl`` exactly.
+      * For a fixed effective batch (bs * accum) and a dataset whose loader
+        length divides cleanly, ``accum=k, bs=B`` yields the same budget as
+        ``accum=1, bs=k*B`` -- hence an identical LR schedule. (With
+        drop_last=False and a non-divisible loader length the two can differ by
+        up to ~epochs steps; this is accepted as negligible.)
+    """
+    accum = max(1, int(accumulate_grad_batches))
+    steps_per_epoch = len_train_dl // accum
+    return epochs * steps_per_epoch
+
+
 class SpectralTrainer:
     def __init__(
         self,

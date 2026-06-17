@@ -7,7 +7,7 @@ import wandb
 from src.data.datamodule import CoastalDataModule
 from src.models.factory import SegmentationModelFactory
 from src.models.losses import CoastalCompositeLoss
-from src.engine.trainer import SpectralTrainer
+from src.engine.trainer import SpectralTrainer, compute_total_steps
 
 @hydra.main(version_base="1.3", config_path="../configs", config_name="config")
 def main(cfg: DictConfig):
@@ -62,14 +62,16 @@ def main(cfg: DictConfig):
     train_dl = datamodule.train_dataloader()
     val_dl = datamodule.val_dataloader()
     
-    # Stage 2 Budgeting (MLOps Config-Driven)
-    steps_per_epoch = len(train_dl)
-    
+    # Stage 2 Budgeting (MLOps Config-Driven). max_steps and the scheduler are
+    # in OPTIMIZER steps; see compute_total_steps for the accumulation-aware
+    # derivation and the equivalence invariants it preserves.
+    accum = max(1, int(cfg.trainer.get("accumulate_grad_batches", 1)))
+
     # Pull from config, default to 10 epochs and 1000 warmup if not specified
-    epochs = cfg.trainer.get("epochs", 10) 
+    epochs = cfg.trainer.get("epochs", 10)
     warmup_steps = cfg.trainer.get("warmup_steps", 1000)
-    
-    total_steps = epochs * steps_per_epoch
+
+    total_steps = compute_total_steps(len(train_dl), epochs, accum)
     
     scheduler_warmup = torch.optim.lr_scheduler.LinearLR(
         optimizer, start_factor=1e-6, end_factor=1.0, total_iters=max(1, warmup_steps)

@@ -37,35 +37,37 @@ evaluation:
     comparison: "greater_than"
     optimize_metrics: ["iou", "f1", "mcc"]
 
+
   model_runs:
     Upernet_ConvnextV2base_native224_weighted:
-      run_dir: "/Volumes/noel_wd_black_sn850x/inference/runs/dev_sweep_all_s1_demak_20260602T153110Z_upernet_tu-convnextv2_base_native224_weighted_224_b0_s112"
+      run_dir: "/Users/noel/Documents/Research_Projects/segwater_v2/outputs/inference/runs/dev_sweep_all_s1_demak_20260616T174024Z_upernet_tu-convnextv2_base_native224_weighted_224_b0_s112"
     Upernet_ConvnextV2base_large_crop_only_1024_b128_s1024:
-      run_dir: "/Volumes/noel_wd_black_sn850x/inference/runs/dev_sweep_all_s1_demak_20260602T153110Z_upernet_tu-convnextv2_base_large_crop_only_1024_b128_s1024"
+      run_dir: "/Users/noel/Documents/Research_Projects/segwater_v2/outputs/inference/runs/dev_sweep_all_s1_demak_20260616T174024Z_upernet_tu-convnextv2_base_large_crop_only_1024_b128_s1024"
     Unet_Resnet50_native224_weighted:
-      run_dir: "/Volumes/noel_wd_black_sn850x/inference/runs/dev_sweep_all_s1_demak_20260602T153110Z_unet_resnet50_native224_weighted_224_b0_s112"
+      run_dir: "/Users/noel/Documents/Research_Projects/segwater_v2/outputs/inference/runs/dev_sweep_all_s1_demak_20260616T174024Z_unet_resnet50_native224_weighted_224_b0_s112"
     Unet_Resnet50_large_crop_only_1024_b128_s1024:
-      run_dir: "/Volumes/noel_wd_black_sn850x/inference/runs/dev_sweep_all_s1_demak_20260602T153110Z_unet_resnet50_large_crop_only_1024_b128_s1024"
+      run_dir: "/Users/noel/Documents/Research_Projects/segwater_v2/outputs/inference/runs/dev_sweep_all_s1_demak_20260616T174024Z_unet_resnet50_large_crop_only_1024_b128_s1024"
     DeepLabV3plus_Resnet50_native224_weighted:
-      run_dir: "/Volumes/noel_wd_black_sn850x/inference/runs/dev_sweep_all_s1_demak_20260602T153110Z_deeplabv3plus_resnet50_native224_weighted_224_b0_s112"
+      run_dir: "/Users/noel/Documents/Research_Projects/segwater_v2/outputs/inference/runs/dev_sweep_all_s1_demak_20260616T174024Z_deeplabv3plus_resnet50_native224_weighted_224_b0_s112"
     DeepLabV3plus_Resnet50_large_crop_only_1024_b128_s1024:
-      run_dir: "/Volumes/noel_wd_black_sn850x/inference/runs/dev_sweep_all_s1_demak_20260602T153110Z_deeplabv3plus_resnet50_large_crop_only_1024_b128_s1024"
+      run_dir: "/Users/noel/Documents/Research_Projects/segwater_v2/outputs/inference/runs/dev_sweep_all_s1_demak_20260616T174024Z_deeplabv3plus_resnet50_large_crop_only_1024_b128_s1024"
     DPT_ViT_B_16_native224_weighted:
-      run_dir: "/Volumes/noel_wd_black_sn850x/inference/runs/dev_sweep_all_s1_demak_20260602T153110Z_dpt_vit_b_16_native224_weighted_224_b0_s112"
+      run_dir: "/Users/noel/Documents/Research_Projects/segwater_v2/outputs/inference/runs/dev_sweep_all_s1_demak_20260616T174024Z_dpt_vit_b_16_native224_weighted_224_b0_s112"
     DPT_ViT_B_16_large_crop_only_1024_b128_s1024:
-      run_dir: "/Volumes/noel_wd_black_sn850x/inference/runs/dev_sweep_all_s1_demak_20260602T153110Z_dpt_vit_b_16_large_crop_only_1024_b128_s1024"
+      run_dir: "/Users/noel/Documents/Research_Projects/segwater_v2/outputs/inference/runs/dev_sweep_all_s1_demak_20260616T174024Z_dpt_vit_b_16_large_crop_only_1024_b128_s1024"
     Segformer_MiT_B4_native224_weighted:
-      run_dir: "/Volumes/noel_wd_black_sn850x/inference/runs/dev_sweep_all_s1_demak_20260602T153110Z_segformer_mit_b4_native224_weighted_224_b0_s112"
+      run_dir: "/Users/noel/Documents/Research_Projects/segwater_v2/outputs/inference/runs/dev_sweep_all_s1_demak_20260616T174024Z_segformer_mit_b4_native224_weighted_224_b0_s112"
     Segformer_MiT_B4_large_crop_only_1024_b128_s1024:
-      run_dir: "/Volumes/noel_wd_black_sn850x/inference/runs/dev_sweep_all_s1_demak_20260602T153110Z_segformer_mit_b4_large_crop_only_1024_b128_s1024"
+      run_dir: "/Users/noel/Documents/Research_Projects/segwater_v2/outputs/inference/runs/dev_sweep_all_s1_demak_20260616T174024Z_segformer_mit_b4_large_crop_only_1024_b128_s1024"
     UnetPlusPlus_Resnet50_native224_weighted:
-      run_dir: "/Volumes/noel_wd_black_sn850x/inference/runs/dev_sweep_all_s1_demak_20260602T153110Z_unetplusplus_resnet50_native224_weighted_224_b0_s112"
+      run_dir: "/Users/noel/Documents/Research_Projects/segwater_v2/outputs/inference/runs/dev_sweep_all_s1_demak_20260616T174024Z_unetplusplus_resnet50_native224_weighted_224_b0_s112"
     UnetPlusPlus_Resnet50_large_crop_only_1024_b128_s1024:
-      run_dir: "/Volumes/noel_wd_black_sn850x/inference/runs/dev_sweep_all_s1_demak_20260602T153110Z_unetplusplus_resnet50_large_crop_only_1024_b128_s1024"
+      run_dir: "/Users/noel/Documents/Research_Projects/segwater_v2/outputs/inference/runs/dev_sweep_all_s1_demak_20260616T174024Z_unetplusplus_resnet50_large_crop_only_1024_b128_s1024"
     Upernet_Swin_Base_224_native224_weighted:
-      run_dir: "/Volumes/noel_wd_black_sn850x/inference/runs/dev_sweep_all_s1_demak_20260602T153110Z_upernet_swin_base_224_native224_weighted_224_b0_s112"
+      run_dir: "/Users/noel/Documents/Research_Projects/segwater_v2/outputs/inference/runs/dev_sweep_all_s1_demak_20260616T174024Z_upernet_swin_base_224_native224_weighted_224_b0_s112"
     Upernet_Swin_Base_224_large_crop_only_1024_b128_s1024:
-      run_dir: "/Volumes/noel_wd_black_sn850x/inference/runs/dev_sweep_all_s1_demak_20260602T153110Z_upernet_swin_base_224_large_crop_only_1024_b128_s1024"
+      run_dir: "/Users/noel/Documents/Research_Projects/segwater_v2/outputs/inference/runs/dev_sweep_all_s1_demak_20260616T174024Z_upernet_swin_base_224_large_crop_only_1024_b128_s1024"
+
 
   missing_prediction_policy: "record_and_continue"
 

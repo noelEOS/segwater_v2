@@ -23,6 +23,7 @@ class CoastalDataModule:
         pin_memory: bool = True,
         persistent_workers: bool = True,
         augment: bool = True,
+        aug_params: Optional[dict] = None,
     ):
         self.root_dir = root_dir
         self.train_path = os.path.join(root_dir, train_file)
@@ -36,6 +37,9 @@ class CoastalDataModule:
         self.pin_memory = pin_memory
         self.persistent_workers = persistent_workers and (num_workers > 0)
         self.augment = augment
+        # Per-aug probabilities forwarded to CoastalAug when augment is enabled.
+        # None -> {} -> CoastalAug's own signature defaults.
+        self.aug_params = aug_params or {}
         self.train_ds = None
         self.val_ds = None
         self.test_ds = None
@@ -46,7 +50,7 @@ class CoastalDataModule:
 
     def setup(self):
         """Initializes dataset objects (but delays memmap opening per process)."""
-        aug = CoastalAug() if self.augment else None
+        aug = CoastalAug(**self.aug_params) if self.augment else None
         
         if os.path.exists(self.train_path):
             self.train_ds = CoastalMemmapDataset(MemmapSpec(self.train_path, H=self.H, W=self.W), transforms=aug)

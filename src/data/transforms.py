@@ -17,7 +17,11 @@ class CoastalAug:
             x = torch.flip(x, dims=[1])
             y = torch.flip(y, dims=[0])
         if torch.rand(()) < self.rot90_k_prob:
-            k = int(torch.randint(0, 4, (1,)))
+            # Draw k from {1,2,3} (90/180/270 deg). Excluding 0 means every time
+            # the branch is entered the sample is actually rotated, so
+            # rot90_k_prob is the true per-sample rotation probability rather
+            # than gate * 3/4 (a k=0 draw would otherwise be a silent no-op).
+            k = int(torch.randint(1, 4, (1,)))
             x = torch.rot90(x, k, dims=(1, 2))
             y = torch.rot90(y, k, dims=(0, 1))
         return x, y

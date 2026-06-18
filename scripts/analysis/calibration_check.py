@@ -398,7 +398,7 @@ def _fmt_count(n: int) -> str:
 
 
 def reliability_plot(q_tab: pd.DataFrame, metrics: dict, title: str, out_png: Path,
-                     ax=None, annotate_counts: bool = True):
+                     ax=None, annotate_counts: bool = True, margin: float = 0.0):
     own = ax is None
     if own:
         fig, ax = plt.subplots(figsize=(4.2, 4.2))
@@ -433,7 +433,7 @@ def reliability_plot(q_tab: pd.DataFrame, metrics: dict, title: str, out_png: Pa
                         xytext=(5, 4), fontsize=6, color="#333333", zorder=4)
             placed.append((x, y))
 
-    ax.set_xlim(0, 1); ax.set_ylim(0, 1)
+    ax.set_xlim(-margin, 1 + margin); ax.set_ylim(-margin, 1 + margin)
     ax.set_aspect("equal")
     ax.set_xlabel("mean predicted probability")
     ax.set_ylabel("observed water frequency")
@@ -651,7 +651,7 @@ def run_model(model_name: str, df_model: pd.DataFrame, cfg: dict, out_root: Path
             "ece_fixed": metrics["ece_fixed_width"],
             "brier": metrics["brier"],
         })
-        grid_entries.append((date, q_tab, metrics))
+        grid_entries.append((date, q_tab, _fine_table(acc), metrics))
         pooled.merge(acc)
 
     # pooled (repeated measures of a single AOI)
@@ -670,10 +670,29 @@ def run_model(model_name: str, df_model: pd.DataFrame, cfg: dict, out_root: Path
     # 2x3 grid A-F by ascending date
     fig, axes = plt.subplots(2, 3, figsize=(11.5, 8))
     panel = list("ABCDEF")
-    for ax, lbl, (date, q_tab, metrics) in zip(axes.ravel(), panel, grid_entries):
+    for ax, lbl, (date, q_tab, fine_tab, metrics) in zip(axes.ravel(), panel, grid_entries):
         # marker size still encodes count; skip per-point text to avoid clutter at grid scale
+        # margin so points at the (0,0)/(1,1) corners are not clipped
         reliability_plot(q_tab, metrics, f"{lbl}  {date}", out_png=None, ax=ax,
-                         annotate_counts=False)
+                         annotate_counts=False, margin=0.035)
+        # in-panel inset: zoom of the lower-left (near-origin) corner where the
+        # quantile bins crowd. Placed at x in [0.5, 0.85], y in [0.15, 0.35].
+        # Fixed extent across all panels/models: x in [0, 0.1], y in [0, 0.05],
+        # with a small margin at the lower-left corner.
+        tq = q_tab[q_tab["count"] > 0]
+        mp = tq["mean_pred"].to_numpy()
+        of = tq["obs_freq"].to_numpy()
+        zx, zy = 0.10, 0.05
+        xpad, ypad = 0.06 * zx, 0.06 * zy
+        axin = ax.inset_axes([0.5, 0.15, 0.35, 0.20])
+        axin.plot([0, max(zx, zy)], [0, max(zx, zy)], ls="--", lw=0.8, color="#888888")
+        axin.plot(mp, of, lw=0.8, color="#1f4e79")
+        axin.scatter(mp, of, s=14, color="#1f4e79", edgecolor="white", linewidth=0.3,
+                     zorder=3)
+        axin.set_xlim(-xpad, zx); axin.set_ylim(-ypad, zy)
+        axin.tick_params(labelsize=5, length=2)
+        axin.set_title("zoom @ origin", fontsize=5.5, pad=1)
+        axin.patch.set_alpha(0.9)
     for ax in axes.ravel()[len(grid_entries):]:
         ax.set_axis_off()
     fig.suptitle(f"{model_name} — per-scene reliability (quantile bins)", fontsize=12)

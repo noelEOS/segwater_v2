@@ -1,6 +1,9 @@
 # Mac Related
 .DS_Store
 
+# Analysis scripts
+scripts/analysis/
+
 # Data
 data/raw/
 data/processed/

@@ -32,7 +32,10 @@ class SpectralTrainer:
     ):
         self.model = model.to(device)
         self.arch = arch
-        self.encoder = encoder
+        # Encoder ids can be HF repo ids containing '/' (e.g.
+        # "facebook/dinov3-vitb16-pretrain-lvd1689m"). Flatten the slash so it
+        # stays a single filename component when used in checkpoint paths.
+        self.encoder = encoder.replace("/", "_")
         self.seed = seed
         self.optimizer = optimizer
         self.scheduler = scheduler

@@ -13,6 +13,6 @@ optuna_storage: ${oc.env:NEON_DB_URL, ''}
 project_name: coastal_water_seg
 seed: 42
 device: cuda
-output_dir: outputs/stage2/${model.arch}_${model.encoder_name}/${now:%H-%M-%S}_s${seed}
+output_dir: outputs/stage2/${model.arch}_${sanitize_path:${model.encoder_name}}/${now:%H-%M-%S}_s${seed}
 
-study_name: hpo_${model.arch}_${model.encoder_name}
+study_name: hpo_${model.arch}_${sanitize_path:${model.encoder_name}}

@@ -9,6 +9,14 @@ from src.models.factory import SegmentationModelFactory
 from src.models.losses import CoastalCompositeLoss
 from src.engine.trainer import SpectralTrainer
 
+# Encoder ids can be HF repo ids containing '/' (e.g.
+# "facebook/dinov3-vitb16-pretrain-lvd1689m"). Sanitize slashes so interpolated
+# run/output dirs stay a single path component instead of nesting directories.
+if not OmegaConf.has_resolver("sanitize_path"):
+    OmegaConf.register_new_resolver(
+        "sanitize_path", lambda s: str(s).replace("/", "_")
+    )
+
 @hydra.main(version_base="1.3", config_path="../configs", config_name="config")
 def main(cfg: DictConfig):
     torch.manual_seed(cfg.seed)

@@ -15,6 +15,14 @@ from optuna.storages import RDBStorage
 
 logger = logging.getLogger(__name__)
 
+# Encoder ids can be HF repo ids containing '/' (e.g.
+# "facebook/dinov3-vitb16-pretrain-lvd1689m"). Sanitize slashes so interpolated
+# run/output dirs stay a single path component instead of nesting directories.
+if not OmegaConf.has_resolver("sanitize_path"):
+    OmegaConf.register_new_resolver(
+        "sanitize_path", lambda s: str(s).replace("/", "_")
+    )
+
 load_dotenv()
 
 def objective(trial: optuna.Trial, cfg: DictConfig):

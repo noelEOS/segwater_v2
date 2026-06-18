@@ -78,6 +78,11 @@ from inference_overlap_utils import (  # noqa: E402
 import matplotlib  # noqa: E402
 matplotlib.use("Agg")
 import matplotlib.pyplot as plt  # noqa: E402
+import matplotlib.colors as mcolors  # noqa: E402
+import matplotlib.colorbar  # noqa: E402
+
+# Colormap for the log10(bin-count) encoding on per-scene reliability diagrams.
+COUNT_CMAP = "viridis"
 
 
 # --------------------------------------------------------------------------- #
@@ -382,32 +387,186 @@ def bins_csv(acc: FineAccumulator, q_tab: pd.DataFrame, f_tab: pd.DataFrame) -> 
     return pd.concat([fine[cols], q[cols], f[cols]], ignore_index=True)
 
 
+def _fmt_count(n: int) -> str:
+    """Compact human-readable pixel count, e.g. 1348463 -> '1.3M', 190495 -> '190k'."""
+    n = int(n)
+    if n >= 1_000_000:
+        return f"{n / 1_000_000:.1f}M"
+    if n >= 1_000:
+        return f"{n / 1_000:.0f}k"
+    return str(n)
+
+
 def reliability_plot(q_tab: pd.DataFrame, metrics: dict, title: str, out_png: Path,
-                     ax=None):
+                     ax=None, annotate_counts: bool = True):
     own = ax is None
     if own:
         fig, ax = plt.subplots(figsize=(4.2, 4.2))
     t = q_tab[q_tab["count"] > 0]
+    counts = t["count"].to_numpy()
+    mean_pred = t["mean_pred"].to_numpy()
+    obs_freq = t["obs_freq"].to_numpy()
+
     ax.plot([0, 1], [0, 1], ls="--", lw=1.0, color="#888888", label="perfect")
-    ax.plot(t["mean_pred"], t["obs_freq"], marker="o", ms=4, lw=1.6,
-            color="#1f4e79", label="quantile bins")
+    # thin connecting line for the curve shape
+    ax.plot(mean_pred, obs_freq, lw=1.2, color="#1f4e79", zorder=2)
+    # marker AREA proportional to log10(bin pixel count) so a reader can see
+    # whether a resolved point rests on millions of pixels or only thousands
+    log_counts = np.log10(np.maximum(counts, 1))
+    sizes = 12.0 + 70.0 * (log_counts - log_counts.min()) / max(np.ptp(log_counts), 1e-9)
+    ax.scatter(mean_pred, obs_freq, s=sizes, color="#1f4e79", edgecolor="white",
+               linewidth=0.5, zorder=3, label="quantile bins (area $\\propto$ log count)")
+
+    if annotate_counts:
+        # Declutter: where saturated quantile bins crowd (typically near p=0),
+        # annotating every point overlaps illegibly. Skip a point's label if a
+        # previously-labelled point is within `min_sep` in BOTH axes; the
+        # marker-area cue still encodes count for the skipped points.
+        min_sep = 0.045
+        placed = []  # (x, y) of labels already drawn
+        order = np.argsort(-counts)  # label the largest-count bins first
+        for i in order:
+            x, y, c = mean_pred[i], obs_freq[i], counts[i]
+            if any(abs(x - px) < min_sep and abs(y - py) < min_sep for px, py in placed):
+                continue
+            ax.annotate(_fmt_count(c), (x, y), textcoords="offset points",
+                        xytext=(5, 4), fontsize=6, color="#333333", zorder=4)
+            placed.append((x, y))
+
     ax.set_xlim(0, 1); ax.set_ylim(0, 1)
     ax.set_aspect("equal")
     ax.set_xlabel("mean predicted probability")
     ax.set_ylabel("observed water frequency")
     ax.set_title(title, fontsize=9)
     ax.text(0.04, 0.96,
-            f"ECE={metrics['ece_quantile']:.4f}\nprev={metrics['prevalence']:.4f}",
+            f"ECE={metrics['ece_quantile']:.4f}\nprev={metrics['prevalence']:.4f}\n"
+            f"n={_fmt_count(metrics['n_valid'])}",
             transform=ax.transAxes, ha="left", va="top", fontsize=8,
             bbox=dict(boxstyle="round", fc="white", ec="#cccccc", alpha=0.8))
     ax.grid(alpha=0.3)
     if own:
-        ax.legend(fontsize=7, loc="lower right")
+        ax.legend(fontsize=6.5, loc="lower right")
         fig.tight_layout()
         fig.savefig(out_png, dpi=200)
         for ext_path in (out_png.with_suffix(".pdf"),):
             fig.savefig(ext_path)
         plt.close(fig)
+
+
+def save_count_colorbar(norm: mcolors.Normalize, out_png: Path) -> None:
+    """Save a standalone colorbar PNG/PDF for the log10(bin-count) color scale.
+
+    Saved separately (not on the per-scene plots) so it can be placed manually in
+    Illustrator. Tick labels are shown as raw pixel counts (10**log10).
+    """
+    fig, cax = plt.subplots(figsize=(1.1, 4.0))
+    cb = matplotlib.colorbar.ColorbarBase(
+        cax, cmap=plt.get_cmap(COUNT_CMAP), norm=norm, orientation="vertical")
+    # Ticks span the ACTUAL data range (norm.vmin..vmax), not rounded decades, so
+    # the colored band fills the bar. Endpoints plus any integer decades inside.
+    decades = [d for d in range(int(np.ceil(norm.vmin)), int(np.floor(norm.vmax)) + 1)]
+    ticks = sorted({norm.vmin, *decades, norm.vmax})
+    cb.set_ticks(ticks)
+    cb.set_ticklabels([_fmt_count(round(10 ** t)) for t in ticks])
+    cb.set_label("bin pixel count (log scale)", fontsize=8)
+    cax.tick_params(labelsize=7)
+    fig.tight_layout()
+    fig.savefig(out_png, dpi=200, bbox_inches="tight")
+    fig.savefig(out_png.with_suffix(".pdf"), bbox_inches="tight")
+    plt.close(fig)
+
+
+def per_scene_reliability_plot(q_tab: pd.DataFrame, fine_tab: pd.DataFrame,
+                               metrics: dict, title: str, out_png: Path,
+                               norm: mcolors.Normalize) -> None:
+    """Per-scene reliability diagram with:
+      - points colored by log10(bin count) on a SHARED scale (no in-plot colorbar);
+      - fixed marker size; no count labels on the main panel;
+      - a small axis margin so points at the (0,0)/(1,1) corners are not clipped;
+      - an inset zoom near the origin, with count annotations only inside it;
+      - a bottom panel: histogram of the predicted-probability distribution
+        (fine 1000-bin pixel counts, log-y), sharing the x-axis.
+    """
+    t = q_tab[q_tab["count"] > 0]
+    counts = t["count"].to_numpy()
+    mean_pred = t["mean_pred"].to_numpy()
+    obs_freq = t["obs_freq"].to_numpy()
+    log_counts = np.log10(np.maximum(counts, 1.0))
+    cmap = plt.get_cmap(COUNT_CMAP)
+
+    # margin so markers at the corners (p~0, p~1) sit fully inside the axes
+    MARGIN = 0.035
+
+    # wider figure: main column on the left, inset sits OUTSIDE to the right
+    fig = plt.figure(figsize=(6.6, 5.6))
+    gs = fig.add_gridspec(2, 2, width_ratios=[3.0, 1.25], height_ratios=[3.2, 1.0],
+                          hspace=0.10, wspace=0.30)
+    ax = fig.add_subplot(gs[0, 0])
+    axh = fig.add_subplot(gs[1, 0], sharex=ax)  # predicted-prob histogram
+    axins = fig.add_subplot(gs[0, 1])           # inset zoom, outside main panel
+
+    # --- main reliability panel ---
+    ax.plot([0, 1], [0, 1], ls="--", lw=1.0, color="#888888", zorder=1)
+    ax.plot(mean_pred, obs_freq, lw=1.0, color="#aaaaaa", zorder=2)
+    ax.scatter(mean_pred, obs_freq, c=log_counts, cmap=cmap, norm=norm,
+               s=42, edgecolor="#333333", linewidth=0.5, zorder=3)
+    ax.set_xlim(-MARGIN, 1 + MARGIN); ax.set_ylim(-MARGIN, 1 + MARGIN)
+    ax.set_aspect("equal")
+    ax.set_ylabel("observed water frequency")
+    ax.tick_params(labelbottom=False)  # x labels live on the histogram panel below
+    ax.set_title(title, fontsize=9)
+    ax.text(0.04, 0.96,
+            f"ECE={metrics['ece_quantile']:.4f}\nprev={metrics['prevalence']:.4f}\n"
+            f"n={_fmt_count(metrics['n_valid'])}",
+            transform=ax.transAxes, ha="left", va="top", fontsize=8,
+            bbox=dict(boxstyle="round", fc="white", ec="#cccccc", alpha=0.8))
+    ax.grid(alpha=0.3)
+
+    # --- inset zoom near origin (OUTSIDE main panel): same points, counts
+    #     annotated only inside the inset, with collision-aware decluttering ---
+    near = (mean_pred <= 0.25) & (obs_freq <= 0.25)
+    zmax = 0.25
+    if near.sum() >= 2:
+        zmax = float(max(mean_pred[near].max(), obs_freq[near].max())) * 1.25
+        zmax = min(max(zmax, 0.02), 0.5)
+    zpad = 0.06 * zmax  # margin inside the inset too
+    axins.plot([0, zmax], [0, zmax], ls="--", lw=0.8, color="#888888")
+    axins.plot(mean_pred, obs_freq, lw=0.8, color="#aaaaaa")
+    axins.scatter(mean_pred, obs_freq, c=log_counts, cmap=cmap, norm=norm,
+                  s=34, edgecolor="#333333", linewidth=0.4, zorder=3)
+    inside = (mean_pred <= zmax) & (obs_freq <= zmax)
+    xs, ys, cs = mean_pred[inside], obs_freq[inside], counts[inside]
+    min_sep = 0.08 * zmax
+    placed = []
+    for i in np.argsort(-cs):  # largest-count bins labelled first
+        x, y, c = xs[i], ys[i], cs[i]
+        if any(abs(x - px) < min_sep and abs(y - py) < min_sep for px, py in placed):
+            continue
+        axins.annotate(_fmt_count(c), (x, y), textcoords="offset points",
+                       xytext=(3, 2), fontsize=6, color="#222222", zorder=4)
+        placed.append((x, y))
+    axins.set_xlim(-zpad, zmax + zpad); axins.set_ylim(-zpad, zmax + zpad)
+    axins.set_aspect("equal")
+    axins.set_title("zoom @ origin", fontsize=7, pad=3)
+    axins.set_xlabel("mean pred", fontsize=6)
+    axins.tick_params(labelsize=5, length=2)
+
+    # --- bottom panel: predicted-probability distribution (fine 1000-bin) ---
+    fb_left = fine_tab["bin_left"].to_numpy()
+    fb_right = fine_tab["bin_right"].to_numpy()
+    fb_count = fine_tab["count"].to_numpy()
+    fb_width = fb_right - fb_left
+    axh.bar(fb_left, np.maximum(fb_count, 0), width=fb_width, align="edge",
+            color="#4c72b0", edgecolor="none")
+    axh.set_yscale("log")
+    axh.set_xlim(-MARGIN, 1 + MARGIN)
+    axh.set_xlabel("predicted probability")
+    axh.set_ylabel("pixel count", fontsize=8)
+    axh.grid(alpha=0.3, which="both")
+
+    fig.savefig(out_png, dpi=200, bbox_inches="tight")
+    fig.savefig(out_png.with_suffix(".pdf"), bbox_inches="tight")
+    plt.close(fig)
 
 
 # --------------------------------------------------------------------------- #
@@ -442,7 +601,8 @@ def run_model(model_name: str, df_model: pd.DataFrame, cfg: dict, out_root: Path
 
     manifest = {"model_name": model_name, "scenes": {}}
     pooled = FineAccumulator(cfg["fine_bins"])
-    grid_entries = []  # (date, q_tab, metrics) for the grid figure
+    grid_entries = []        # (date, q_tab, metrics) for the grid figure
+    per_scene_entries = []   # (date, q_tab, metrics) rendered later with shared color norm
     summary_rows = []
 
     for _, row in df_model.iterrows():
@@ -471,8 +631,11 @@ def run_model(model_name: str, df_model: pd.DataFrame, cfg: dict, out_root: Path
         bc.to_csv(model_out / "per_scene" / f"{date}_bins.csv", index=False)
         with open(model_out / "per_scene" / f"{date}_metrics.json", "w") as fh:
             json.dump(metrics, fh, indent=2)
-        reliability_plot(q_tab, metrics, f"{model_name}  {date}",
-                         model_out / "per_scene" / f"{date}_reliability.png")
+        # per-scene reliability PNG is rendered later (main), once the global
+        # log-count color scale is known (shared across all models/scenes).
+        # Cache the fine (1000-bin) table too, for the predicted-probability
+        # distribution histogram on the bottom panel.
+        per_scene_entries.append((date, q_tab, _fine_table(acc), metrics))
 
         manifest["scenes"][date] = {
             "s1_id": row["s1_id"],
@@ -508,7 +671,9 @@ def run_model(model_name: str, df_model: pd.DataFrame, cfg: dict, out_root: Path
     fig, axes = plt.subplots(2, 3, figsize=(11.5, 8))
     panel = list("ABCDEF")
     for ax, lbl, (date, q_tab, metrics) in zip(axes.ravel(), panel, grid_entries):
-        reliability_plot(q_tab, metrics, f"{lbl}  {date}", out_png=None, ax=ax)
+        # marker size still encodes count; skip per-point text to avoid clutter at grid scale
+        reliability_plot(q_tab, metrics, f"{lbl}  {date}", out_png=None, ax=ax,
+                         annotate_counts=False)
     for ax in axes.ravel()[len(grid_entries):]:
         ax.set_axis_off()
     fig.suptitle(f"{model_name} — per-scene reliability (quantile bins)", fontsize=12)
@@ -521,6 +686,7 @@ def run_model(model_name: str, df_model: pd.DataFrame, cfg: dict, out_root: Path
 
     summary = pd.DataFrame(summary_rows)
     return {"model_name": model_name, "out_dir": str(model_out),
+            "model_out": model_out, "per_scene_entries": per_scene_entries,
             "summary": summary, "pooled_metrics": p_metrics}
 
 
@@ -613,6 +779,32 @@ def main():
     for m in models:
         res = run_model(m, df[df["model_name"] == m], cfg, out_root, log)
         results.append(res)
+
+    # --- shared (global) log10(bin-count) color scale across ALL models/scenes ---
+    all_counts = []
+    for res in results:
+        for _date, q_tab, _fine_tab, _metrics in res["per_scene_entries"]:
+            c = q_tab.loc[q_tab["count"] > 0, "count"].to_numpy()
+            all_counts.append(c)
+    all_counts = np.concatenate(all_counts) if all_counts else np.array([1])
+    log_lo = float(np.log10(max(all_counts.min(), 1)))
+    log_hi = float(np.log10(max(all_counts.max(), 1)))
+    if log_hi <= log_lo:
+        log_hi = log_lo + 1e-6
+    count_norm = mcolors.Normalize(vmin=log_lo, vmax=log_hi)
+    log(f"\nGlobal per-scene color scale: log10(count) in "
+        f"[{log_lo:.3f}, {log_hi:.3f}] -> [{_fmt_count(10**log_lo)}, {_fmt_count(10**log_hi)}] px")
+
+    # one standalone colorbar (for Illustrator); not embedded in the per-scene plots
+    save_count_colorbar(count_norm, out_root / "colorbar.png")
+
+    # render per-scene reliability diagrams with the shared scale
+    for res in results:
+        for date, q_tab, fine_tab, metrics in res["per_scene_entries"]:
+            per_scene_reliability_plot(
+                q_tab, fine_tab, metrics, f"{res['model_name']}  {date}",
+                res["model_out"] / "per_scene" / f"{date}_reliability.png",
+                count_norm)
 
     # final summary table
     log("\n================ SUMMARY ================")

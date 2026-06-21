@@ -61,14 +61,15 @@ def resolve_images(sweep: dict) -> list[str]:
     return []
 
 
-def build_scene_paths(root_dir: str, run_name: str, image: str) -> dict:
+def build_scene_paths(root_dir: str, run_name: str, image: str, shoreline_format: str = "gpkg") -> dict:
     scene_id = scene_id_from_path(image)
     scene_dir = Path(root_dir) / run_name / scene_id
+    shoreline_ext = "geojson" if str(shoreline_format).lower() == "geojson" else "gpkg"
     return {
         "scene_id": scene_id,
         "scene_output_dir": str(scene_dir),
         "probability_geotiff": str(scene_dir / f"{scene_id}_probability_water.tif"),
-        "shoreline_geojson": str(scene_dir / f"{scene_id}_shoreline.geojson"),
+        "shoreline_geojson": str(scene_dir / f"{scene_id}_shoreline.{shoreline_ext}"),
         "metadata_json": str(scene_dir / f"{scene_id}_metadata.json"),
     }
 
@@ -162,8 +163,12 @@ def main():
                 error_message = f"run_inference.py returned exit code {result.returncode}"
                 print(f"FAILED GROUP: {run_name}")
 
+        shoreline_format = overrides.get(
+            "inference.post_processing.shoreline.output_format", "gpkg"
+        )
+
         for image_idx, image in enumerate(images, start=1):
-            paths = build_scene_paths(root_dir, run_name, image)
+            paths = build_scene_paths(root_dir, run_name, image, shoreline_format)
             manifest_rows.append(
                 {
                     "sweep_id": sweep_id,

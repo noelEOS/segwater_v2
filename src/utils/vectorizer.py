@@ -9,11 +9,18 @@ from skimage import measure
 
 logger = logging.getLogger(__name__)
 
+# Map an output format alias to a GeoPandas/OGR driver and canonical extension.
+OUTPUT_FORMATS = {
+    "gpkg": ("GPKG", ".gpkg"),
+    "geojson": ("GeoJSON", ".geojson"),
+}
+
+
 class ShorelineVectorizer:
     """
     Extracts high-precision sub-pixel contours from a probability map.
-    Applies mathematical smoothing and projects pixel coordinates into 
-    real-world geospatial formats (GeoJSON/Shapefile).
+    Applies mathematical smoothing and projects pixel coordinates into
+    real-world geospatial formats (GeoPackage/GeoJSON).
     """
     def __init__(
         self,
@@ -25,17 +32,32 @@ class ShorelineVectorizer:
         min_length_meters: float,
         simplify_tolerance_meters: float,
         keep_top_k: int | None = None,
+        output_format: str = "gpkg",
+        densify: bool = True,
+        densify_spacing_meters: float = 1.0,
     ):
         self.prob_map_path = prob_map_path
         self.reference_tif_path = reference_tif_path
         self.shape = shape
         self.dtype = np.float32 if precision == "float32" else np.float16
-        
+
         # MLOps Configured Parameters
         self.threshold = threshold
         self.min_length_meters = min_length_meters
         self.simplify_tolerance_meters = simplify_tolerance_meters
         self.keep_top_k = keep_top_k
+
+        # Output format (gpkg is the default). Densification inserts vertices
+        # along the existing geometry so downstream transect intersection QC has
+        # enough points within the search band; it never changes the shape.
+        self.output_format = str(output_format).lower()
+        if self.output_format not in OUTPUT_FORMATS:
+            raise ValueError(
+                f"Unsupported output_format '{output_format}'. "
+                f"Choose one of: {sorted(OUTPUT_FORMATS)}."
+            )
+        self.densify = bool(densify)
+        self.densify_spacing_meters = float(densify_spacing_meters)
 
         # Load spatial metadata from the original SAR swath
         with rasterio.open(self.reference_tif_path) as src:
@@ -47,12 +69,37 @@ class ShorelineVectorizer:
 
         logger.info(f"Initialized Vectorizer. CRS: {self.crs} | Threshold: {self.threshold}")
         logger.info(f"Filters -> Min Length: {self.min_length_meters}m | Tolerance: {self.simplify_tolerance_meters}m")
+        logger.info(
+            f"Output -> Format: {self.output_format} | "
+            f"Densify: {self.densify} (<= {self.densify_spacing_meters}m spacing)"
+        )
 
-    def extract_and_save(self, output_geojson_path: str):
+    def _resolve_output_path(self, output_path: str) -> str:
+        """Force the output file extension to match the configured format."""
+        driver, ext = OUTPUT_FORMATS[self.output_format]
+        root, current_ext = os.path.splitext(output_path)
+        if current_ext.lower() != ext:
+            resolved = root + ext
+            logger.info(
+                f"Adjusting shoreline output extension '{current_ext}' -> '{ext}' "
+                f"to match output_format '{self.output_format}'."
+            )
+            return resolved
+        return output_path
+
+    def _write(self, gdf: gpd.GeoDataFrame, output_path: str) -> None:
+        """Write a GeoDataFrame using the driver for the configured format."""
+        driver, _ = OUTPUT_FORMATS[self.output_format]
+        os.makedirs(os.path.dirname(output_path), exist_ok=True)
+        gdf.to_file(output_path, driver=driver)
+
+    def extract_and_save(self, output_path: str):
         """
-        Reads the memmap, executes Marching Squares, georeferences the lines, 
-        and exports a GeoDataFrame.
+        Reads the memmap, executes Marching Squares, georeferences the lines,
+        and exports a GeoDataFrame in the configured format (gpkg by default).
         """
+        output_path = self._resolve_output_path(output_path)
+
         logger.info("Loading global probability memmap into system RAM for contouring...")
         # Since contouring requires full topological context, we load the memmap into RAM.
         # A 25000x25000 float16 array is ~1.2GB, which fits comfortably in system memory.
@@ -101,14 +148,13 @@ class ShorelineVectorizer:
         if len(gdf) == 0:
             logger.warning(
                 "No valid contour geometries were extracted. "
-                "Writing an empty GeoJSON."
+                f"Writing an empty {self.output_format} file."
             )
 
-            os.makedirs(os.path.dirname(output_geojson_path), exist_ok=True)
-            gdf.to_file(output_geojson_path, driver="GeoJSON")
+            self._write(gdf, output_path)
 
-            logger.info(f"Empty shoreline vector saved to {output_geojson_path}")
-            return output_geojson_path
+            logger.info(f"Empty shoreline vector saved to {output_path}")
+            return output_path
 
         # ---------------------------------------------------------
         # Metric post-processing
@@ -141,6 +187,12 @@ class ShorelineVectorizer:
                     "Skipping simplification."
                 )
 
+            if self.densify and self.densify_spacing_meters > 0:
+                logger.warning(
+                    "Densification was requested, but CRS is undefined. "
+                    "Cannot densify to a metric spacing. Skipping densification."
+                )
+
         else:
             try:
                 metric_crs = gdf.estimate_utm_crs()
@@ -171,6 +223,12 @@ class ShorelineVectorizer:
                         logger.warning(
                             "simplify_tolerance_meters was configured, but no metric CRS could be estimated. "
                             "Skipping simplification."
+                        )
+
+                    if self.densify and self.densify_spacing_meters > 0:
+                        logger.warning(
+                            "Densification was requested, but no metric CRS could be estimated. "
+                            "Skipping densification."
                         )
 
                 else:
@@ -238,12 +296,35 @@ class ShorelineVectorizer:
                             )
                         )
 
+                    # Densify in metres so the spacing is a true metric distance.
+                    # segmentize() inserts vertices along the existing geometry
+                    # without changing its shape. Runs after simplification so the
+                    # final (possibly simplified) line is the one being densified.
+                    if self.densify and self.densify_spacing_meters > 0 and len(gdf_metric) > 0:
+                        logger.info(
+                            f"Densifying shoreline geometries to <= "
+                            f"{self.densify_spacing_meters}m vertex spacing..."
+                        )
+
+                        gdf_metric["geometry"] = gdf_metric.geometry.segmentize(
+                            self.densify_spacing_meters
+                        )
+
+                        gdf_metric["n_vertices_densified"] = gdf_metric.geometry.apply(
+                            lambda geom: (
+                                len(geom.coords)
+                                if geom is not None and not geom.is_empty
+                                else 0
+                            )
+                        )
+
                     gdf = gdf_metric.to_crs(original_crs)
 
             except Exception as exc:
                 logger.warning(
                     f"Metric vector post-processing failed: {exc}. "
-                    "Falling back to source CRS top-k without length filtering or simplification."
+                    "Falling back to source CRS top-k without length filtering, "
+                    "simplification, or densification."
                 )
 
                 gdf["length_source_crs"] = gdf.geometry.length
@@ -258,8 +339,7 @@ class ShorelineVectorizer:
 
         logger.info(f"Final shoreline output contains {len(gdf)} geometries.")
 
-        os.makedirs(os.path.dirname(output_geojson_path), exist_ok=True)
-        gdf.to_file(output_geojson_path, driver="GeoJSON")
+        self._write(gdf, output_path)
 
-        logger.info(f"Shoreline vector saved successfully to {output_geojson_path}")
-        return output_geojson_path
+        logger.info(f"Shoreline vector saved successfully to {output_path}")
+        return output_path

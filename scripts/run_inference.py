@@ -397,6 +397,11 @@ def process_scene(
             else 0.0
         )
 
+        shoreline_cfg = cfg.inference.post_processing.get("shoreline", {})
+        output_format = shoreline_cfg.get("output_format", "gpkg")
+        densify = shoreline_cfg.get("densify", True)
+        densify_spacing_meters = shoreline_cfg.get("densify_spacing_meters", 1.0)
+
         vectorizer = ShorelineVectorizer(
             prob_map_path=str(paths.probability_memmap),
             reference_tif_path=input_image,
@@ -406,9 +411,12 @@ def process_scene(
             min_length_meters=min_length_meters,
             simplify_tolerance_meters=simplify_tolerance_meters,
             keep_top_k=cfg.inference.post_processing.filtering.keep_top_k,
+            output_format=output_format,
+            densify=densify,
+            densify_spacing_meters=densify_spacing_meters,
         )
 
-        shoreline_path = vectorizer.extract_and_save(output_geojson_path=str(paths.shoreline_geojson))
+        shoreline_path = vectorizer.extract_and_save(output_path=str(paths.shoreline_geojson))
         logger.info(f"[POST-PROC] Shoreline vector output available at: {shoreline_path}")
     else:
         logger.info("[POST-PROC] Shoreline extraction bypassed via configuration.")

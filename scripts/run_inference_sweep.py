@@ -127,6 +127,13 @@ def main():
         if checkpoint["model"].get("encoder_name"):
             overrides["model.encoder_name"] = checkpoint["model"]["encoder_name"]
 
+        # Forward per-checkpoint encoder_kwargs (e.g. swinv2 needs
+        # img_size/strict_img_size to relax its fixed 256px patch-embed assertion).
+        # The default inference model config has no encoder_kwargs key, so each
+        # leaf is appended with Hydra's '+' prefix.
+        for kw_key, kw_value in (checkpoint["model"].get("encoder_kwargs") or {}).items():
+            overrides[f"+model.encoder_kwargs.{kw_key}"] = kw_value
+
         unsanitized_run_name = f"{sweep_id}__{checkpoint['name']}__{preset['name']}"
         run_name = sanitize_for_path(unsanitized_run_name)
         overrides["inference.output.run_name"] = run_name

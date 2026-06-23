@@ -20,7 +20,7 @@ sweep:
   common_overrides:
     inference.post_processing.smoothing.apply_simplification: true
     inference.post_processing.smoothing.simplify_tolerance_meters: 1.0
-    inference.post_processing.filtering.apply_length_filter: true
+    inference.post_processing.filtering.apply_length_filter: false
     inference.post_processing.filtering.min_length_meters: 10000.0
     inference.data.edge_policy: "shift_inward"
     inference.stitching.min_weight: 0.001

@@ -90,6 +90,7 @@ sweep:
         encoder_kwargs:
           img_size: 224
           strict_img_size: false
+          
 #    - name: "upernet_tu-convnextv2_base"
 #      checkpoint_path: "outputs/stage2/upernet_tu-convnextv2_base/s42/upernet_tu-convnextv2_base_s42_step36000_miou0.9536.pth"
 #      model:

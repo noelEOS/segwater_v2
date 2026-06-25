@@ -1,0 +1,51 @@
+# configs/inference_sweep.yaml
+#
+# Lightweight development sweep for running one or more scenes through multiple
+# checkpoints and inference-tiling presets. The sweep runner expands this file
+# into repeated calls to scripts/run_inference.py.
+
+sweep:
+  name: "dev_sweep_all_narrabeen"
+  dry_run: false
+  continue_on_error: true
+
+  # Use either input_images or input_dir + input_glob.
+  # input_images:
+  #  - "/home/noel/s1/S1_20231008_110652_25_1_4.tif"
+
+  input_dir: "/home/noel/NARRABEEN_ron_147_ts_9_sn_16/input_data_ron_147_ts_9_sn_16_small_aoi"
+  input_glob: "*.tif"
+
+  # Overrides applied to every run in the sweep.
+  common_overrides:
+    inference.post_processing.smoothing.apply_simplification: true
+    inference.post_processing.smoothing.simplify_tolerance_meters: 1.0
+    inference.post_processing.filtering.apply_length_filter: true
+    inference.post_processing.filtering.min_length_meters: 10000.0
+    inference.data.edge_policy: "shift_inward"
+    inference.stitching.min_weight: 0.001
+
+  checkpoints:
+    - name: "upernet_swin_base_224"
+      checkpoint_path: "outputs/stage2/upernet_tu-swin_base_patch4_window7_224/s42/upernet_tu-swin_base_patch4_window7_224_s42_step40340_miou0.9506.pth"
+      model:
+        arch: "upernet"
+        encoder_name: "tu-swin_base_patch4_window7_224"
+
+    - name: "upernet_tu-convnextv2_base"
+      checkpoint_path: "outputs/stage2/upernet_tu-convnextv2_base/s42/upernet_tu-convnextv2_base_s42_step36000_miou0.9536.pth"
+      model:
+        arch: "upernet"
+        encoder_name: "tu-convnextv2_base"
+
+  presets:
+    - name: "native224_weighted_224_b0_s2"
+      overrides:
+        inference.data.tile_size: 224
+        inference.data.buffer_size: 0
+        inference.data.stride: 2
+        inference.stitching.mode: "weighted_blend"
+        inference.stitching.blend_window: "hann"
+    
+
+

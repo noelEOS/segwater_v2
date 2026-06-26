@@ -8,11 +8,13 @@
 # The sweep runner expands this file into repeated calls to scripts/run_inference.py.
 
 sweep:
-  name: "dev_sweep_all_narrabeen_s42"
+  name: "dev_sweep_all_narrabeen_ASC_s42"
   dry_run: false
   continue_on_error: true
 
-  input_dir: "/home/noel/NARRABEEN_ron_147_ts_9_sn_16/input_data_ron_147_ts_9_sn_16_small_aoi"
+  #input_dir: "/home/noel/NARRABEEN_ron_147_ts_9_sn_16/input_data_ron_147_ts_9_sn_16_small_aoi"
+  input_dir: "/home/noel/SDS_S1_narrabeen_ASC"
+  
   input_glob: "*.tif"
 
   # Overrides applied to every run in the sweep.

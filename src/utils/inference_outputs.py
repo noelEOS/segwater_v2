@@ -105,6 +105,13 @@ def prepare_output_paths(cfg: DictConfig) -> InferenceOutputPaths:
     configured_run_name = cfg.inference.output.run_name
     run_id = sanitize_for_path(configured_run_name) if configured_run_name else build_checkpoint_id(cfg)
 
+    # Shoreline vector extension follows the configured output format (gpkg default).
+    shoreline_format = str(
+        OmegaConf.select(cfg, "inference.post_processing.shoreline.output_format")
+        or "gpkg"
+    ).lower()
+    shoreline_ext = {"gpkg": "gpkg", "geojson": "geojson"}.get(shoreline_format, "gpkg")
+
     root_dir = Path(str(cfg.inference.output.root_dir))
     run_dir = root_dir / run_id
     scene_dir = run_dir / scene_id
@@ -128,7 +135,7 @@ def prepare_output_paths(cfg: DictConfig) -> InferenceOutputPaths:
         probability_memmap=scene_dir / f"{scene_id}_probability_water.memmap",
         probability_geotiff=scene_dir / f"{scene_id}_probability_water.tif",
         binary_mask_geotiff=scene_dir / f"{scene_id}_mask_water.tif",
-        shoreline_geojson=scene_dir / f"{scene_id}_shoreline.geojson",
+        shoreline_geojson=scene_dir / f"{scene_id}_shoreline.{shoreline_ext}",
         scene_metadata=scene_dir / f"{scene_id}_metadata.json",
         run_config=run_dir / "run_config.yaml",
         run_manifest=run_dir / "run_manifest.csv",

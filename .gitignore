@@ -1,10 +1,14 @@
 # Mac Related
 .DS_Store
 
+# Analysis scripts
+scripts/analysis/
+
 # Data
 data/raw/
 data/processed/
 notebooks/
+data/s1_inputs/
 
 # Docs
 docs/

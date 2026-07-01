@@ -61,14 +61,15 @@ def resolve_images(sweep: dict) -> list[str]:
     return []
 
 
-def build_scene_paths(root_dir: str, run_name: str, image: str) -> dict:
+def build_scene_paths(root_dir: str, run_name: str, image: str, shoreline_format: str = "gpkg") -> dict:
     scene_id = scene_id_from_path(image)
     scene_dir = Path(root_dir) / run_name / scene_id
+    shoreline_ext = "geojson" if str(shoreline_format).lower() == "geojson" else "gpkg"
     return {
         "scene_id": scene_id,
         "scene_output_dir": str(scene_dir),
         "probability_geotiff": str(scene_dir / f"{scene_id}_probability_water.tif"),
-        "shoreline_geojson": str(scene_dir / f"{scene_id}_shoreline.geojson"),
+        "shoreline_geojson": str(scene_dir / f"{scene_id}_shoreline.{shoreline_ext}"),
         "metadata_json": str(scene_dir / f"{scene_id}_metadata.json"),
     }
 
@@ -126,6 +127,13 @@ def main():
         if checkpoint["model"].get("encoder_name"):
             overrides["model.encoder_name"] = checkpoint["model"]["encoder_name"]
 
+        # Forward per-checkpoint encoder_kwargs (e.g. swinv2 needs
+        # img_size/strict_img_size to relax its fixed 256px patch-embed assertion).
+        # The default inference model config has no encoder_kwargs key, so each
+        # leaf is appended with Hydra's '+' prefix.
+        for kw_key, kw_value in (checkpoint["model"].get("encoder_kwargs") or {}).items():
+            overrides[f"+model.encoder_kwargs.{kw_key}"] = kw_value
+
         unsanitized_run_name = f"{sweep_id}__{checkpoint['name']}__{preset['name']}"
         run_name = sanitize_for_path(unsanitized_run_name)
         overrides["inference.output.run_name"] = run_name
@@ -162,8 +170,12 @@ def main():
                 error_message = f"run_inference.py returned exit code {result.returncode}"
                 print(f"FAILED GROUP: {run_name}")
 
+        shoreline_format = overrides.get(
+            "inference.post_processing.shoreline.output_format", "gpkg"
+        )
+
         for image_idx, image in enumerate(images, start=1):
-            paths = build_scene_paths(root_dir, run_name, image)
+            paths = build_scene_paths(root_dir, run_name, image, shoreline_format)
             manifest_rows.append(
                 {
                     "sweep_id": sweep_id,

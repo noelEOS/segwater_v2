@@ -5,7 +5,7 @@
 # into repeated calls to scripts/run_inference.py.
 
 sweep:
-  name: "dev_sweep_all_s1_demak"
+  name: "dev_sweep_all_narrabeen"
   dry_run: false
   continue_on_error: true
 
@@ -13,76 +13,105 @@ sweep:
   # input_images:
   #  - "/home/noel/s1/S1_20231008_110652_25_1_4.tif"
 
-  input_dir: "/home/noel/data_semarang"
+  input_dir: "/home/noel/NARRABEEN_ron_147_ts_9_sn_16/input_data_ron_147_ts_9_sn_16_small_aoi"
   input_glob: "*.tif"
 
   # Overrides applied to every run in the sweep.
   common_overrides:
     inference.post_processing.smoothing.apply_simplification: true
     inference.post_processing.smoothing.simplify_tolerance_meters: 1.0
-    inference.post_processing.filtering.apply_length_filter: true
+    inference.post_processing.filtering.apply_length_filter: false
     inference.post_processing.filtering.min_length_meters: 10000.0
     inference.data.edge_policy: "shift_inward"
     inference.stitching.min_weight: 0.001
 
   checkpoints:
-    - name: "unet_resnet50"
-      checkpoint_path: "outputs/stage2/unet_resnet50_s42/12-13-00_s42/unet_resnet50_s42_step31200_miou0.9379.pth"
-      model:
-        arch: "unet"
-        encoder_name: "resnet50"
+#    - name: "unet_resnet50"
+#      checkpoint_path: "outputs/stage2/unet_resnet50/s42/unet_resnet50_s42_step31200_miou0.9379.pth"
+#      model:
+#        arch: "unet"
+#        encoder_name: "resnet50"
 
-    - name: "unetplusplus_resnet50"
-      checkpoint_path: "outputs/stage2/unetplusplus_resnet50_s42/13-06-38_s42/unetplusplus_resnet50_s42_step27600_miou0.9380.pth"
-      model:
-        arch: "unetplusplus"
-        encoder_name: "resnet50"
+#    - name: "unet_resnet50_aug-flip"
+#      checkpoint_path: "outputs/stage2/unet_resnet50_augment/s42/unet_resnet50_s42_step40340_miou0.9408.pth"
+#      model:
+#        arch: "unet"
+#        encoder_name: "resnet50"
+#
+#    - name: "unet_resnet50_aug-flip-rot"
+#      checkpoint_path: "outputs/stage2/unet_resnet50_augment_rot90/s42/unet_resnet50_s42_step39600_miou0.9387.pth"
+#      model:
+#        arch: "unet"
+#        encoder_name: "resnet50"
 
-    - name: "deeplabv3plus_resnet50"
-      checkpoint_path: "outputs/stage2/deeplabv3plus_resnet50_s42/02-01-56_s42/deeplabv3plus_resnet50_s42_step31200_miou0.9391.pth"
-      model:
-        arch: "deeplabv3plus"
-        encoder_name: "resnet50"
 
-    - name: "dpt_vit_b_16"
-      checkpoint_path: "outputs/stage2/dpt_tu-vit_base_patch16_224.mae_s42/14-56-12_s42/dpt_tu-vit_base_patch16_224.mae_s42_step34800_miou0.9371.pth"
-      model:
-        arch: "dpt"
-        encoder_name: "tu-vit_base_patch16_224.mae"
+#    - name: "unetplusplus_resnet50"
+#      checkpoint_path: "outputs/stage2/unetplusplus_resnet50/s42/unetplusplus_resnet50_s42_step27600_miou0.9380.pth"
+#      model:
+#        arch: "unetplusplus"
+#        encoder_name: "resnet50"
+#
+#    - name: "deeplabv3plus_resnet50"
+#      checkpoint_path: "outputs/stage2/deeplabv3plus_resnet50/s42/deeplabv3plus_resnet50_s42_step31200_miou0.9391.pth"
+#      model:
+#        arch: "deeplabv3plus"
+#        encoder_name: "resnet50"
+#
+#    - name: "dpt_vit_b_16"
+#      checkpoint_path: "outputs/stage2/dpt_tu-vit_base_patch16_224.mae/s42/dpt_tu-vit_base_patch16_224.mae_s42_step34800_miou0.9371.pth"
+#      model:
+#        arch: "dpt"
+#        encoder_name: "tu-vit_base_patch16_224.mae"
+#
+#    - name: "segformer_mit_b4"
+#      checkpoint_path: "outputs/stage2/segformer_mit_b4/s42/segformer_mit_b4_s42_step40340_miou0.9506.pth"
+#      model:
+#        arch: "segformer"
+#        encoder_name: "mit_b4"
+#
+#    - name: "upernet_swin_base_224"
+#      checkpoint_path: "outputs/stage2/upernet_tu-swin_base_patch4_window7_224/s42/upernet_tu-swin_base_patch4_window7_224_s42_step40340_miou0.9506.pth"
+#      model:
+#        arch: "upernet"
+#        encoder_name: "tu-swin_base_patch4_window7_224"
 
-    - name: "segformer_mit_b4"
-      checkpoint_path: "outputs/stage2/segformer_mit_b4_s42/01-20-41_s42/segformer_mit_b4_s42_step40340_miou0.9506.pth"
-      model:
-        arch: "segformer"
-        encoder_name: "mit_b4"
+#    - name: "upernet_swin_base_224_E20"
+#      checkpoint_path: "outputs/stage2/upernet_tu-swin_base_patch4_window7_224/E20_s42/upernet_tu-swin_base_patch4_window7_224_s42_step80680_miou0.9515.pth"
+#      model:
+#        arch: "upernet"
+#        encoder_name: "tu-swin_base_patch4_window7_224"
 
-    - name: "upernet_swin_base_224"
-      checkpoint_path: "outputs/stage2/upernet_tu-swin_base_patch4_window7_224_s42/17-26-54_s42/upernet_tu-swin_base_patch4_window7_224_s42_step40340_miou0.9506.pth"
+
+    - name: "upernet_tu-swinv2_base"
+      checkpoint_path: "outputs/stage2/upernet_tu-swinv2_base_window12to16_192to256/s42/upernet_tu-swinv2_base_window12to16_192to256_s42_step38400_miou0.9500.pth"
       model:
         arch: "upernet"
-        encoder_name: "tu-swin_base_patch4_window7_224"
-
-    - name: "upernet_tu-convnextv2_base"
-      checkpoint_path: "outputs/stage2/upernet_tu-convnextv2_base_s42/17-37-52_s42/upernet_tu-convnextv2_base_s42_step36000_miou0.9536.pth"
-      model:
-        arch: "upernet"
-        encoder_name: "tu-convnextv2_base"
+        encoder_name: "tu-swinv2_base_window12to16_192to256"
+        encoder_kwargs:
+          img_size: 224
+          strict_img_size: false
+          
+#    - name: "upernet_tu-convnextv2_base"
+#      checkpoint_path: "outputs/stage2/upernet_tu-convnextv2_base/s42/upernet_tu-convnextv2_base_s42_step36000_miou0.9536.pth"
+#      model:
+#        arch: "upernet"
+#        encoder_name: "tu-convnextv2_base"
 
   presets:
-    - name: "large_crop_only_1024_b128_s1024"
-      overrides:
-        inference.data.tile_size: 1024
-        inference.data.buffer_size: 128
-        inference.data.stride: 1024
-        inference.stitching.mode: "crop_only"
-
-    - name: "large_weighted_1024_b128_s512"
-      overrides:
-        inference.data.tile_size: 1024
-        inference.data.buffer_size: 128
-        inference.data.stride: 512
-        inference.stitching.mode: "weighted_blend"
-        inference.stitching.blend_window: "hann"
+#    - name: "large_crop_only_1024_b128_s1024"
+#      overrides:
+#        inference.data.tile_size: 1024
+#        inference.data.buffer_size: 128
+#        inference.data.stride: 1024
+#        inference.stitching.mode: "crop_only"
+#
+#    - name: "large_weighted_1024_b128_s512"
+#      overrides:
+#        inference.data.tile_size: 1024
+#        inference.data.buffer_size: 128
+#        inference.data.stride: 512
+#        inference.stitching.mode: "weighted_blend"
+#        inference.stitching.blend_window: "hann"
 
     - name: "native224_weighted_224_b0_s112"
       overrides:
@@ -91,3 +120,31 @@ sweep:
         inference.data.stride: 112
         inference.stitching.mode: "weighted_blend"
         inference.stitching.blend_window: "hann"
+
+#    - name: "native224_weighted_224_b0_s32_tta_flip2"
+#      overrides:
+#        inference.data.tile_size: 224
+#        inference.data.buffer_size: 0
+#        inference.data.stride: 32
+#        inference.stitching.mode: "weighted_blend"
+#        inference.stitching.blend_window: "hann"
+#        inference.tta.enabled: true
+#        inference.tta.transforms: ["hflip", "vflip"]
+#        inference.tta.merge: "mean"
+
+#    - name: "native224_weighted_224_b0_s32"
+#      overrides:
+#        inference.data.tile_size: 224
+#        inference.data.buffer_size: 0
+#        inference.data.stride: 32
+#        inference.stitching.mode: "weighted_blend"
+#        inference.stitching.blend_window: "hann"
+#
+#    - name: "native224_weighted_160_b32_s32"
+#      overrides:
+#        inference.data.tile_size: 160
+#        inference.data.buffer_size: 32
+#        inference.data.stride: 80
+#        inference.stitching.mode: "weighted_blend"
+#        inference.stitching.blend_window: "hann"
+    

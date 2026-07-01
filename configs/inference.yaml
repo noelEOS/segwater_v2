@@ -112,8 +112,17 @@ inference:
     filtering:
       apply_length_filter: False
       min_length_meters: 50.0
-      keep_top_k: 5
+      keep_top_k: 1
 
     smoothing:
       apply_simplification: False
       simplify_tolerance_meters: 10.0
+
+    shoreline:
+      # Vector output format for the extracted shoreline. gpkg is the new default.
+      output_format: gpkg      # "gpkg" or "geojson"
+      # Densify the output by inserting vertices along the existing geometry
+      # (shape-preserving) so downstream transect intersection QC catches enough
+      # points within its search band. Done in a metric CRS so spacing is true metres.
+      densify: True
+      densify_spacing_meters: 1.0

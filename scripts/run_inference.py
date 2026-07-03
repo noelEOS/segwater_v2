@@ -276,9 +276,11 @@ def process_scene(
 
     total_batches = len(dataloader)
 
-    with torch.no_grad():
+    with torch.inference_mode():
         for batch_idx, (images, metadata) in enumerate(tqdm(dataloader, desc=f"Inference {paths.scene_id}")):
-            images = images.to(device)
+            # non_blocking pairs with the DataLoader's pin_memory=True to overlap
+            # the host-to-device copy with compute; values are unchanged.
+            images = images.to(device, non_blocking=True)
 
             with torch.autocast(device_type=device.type, dtype=amp_dtype):
                 if tta_enabled:

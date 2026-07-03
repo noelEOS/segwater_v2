@@ -18,6 +18,19 @@ sweep:
 
   # Overrides applied to every run in the sweep.
   common_overrides:
+    # Throughput settings, sized for 224px model inputs (native224 presets).
+    # Inference holds no gradients/optimizer state, so batches far beyond the
+    # training batch size fit in VRAM. For the 1024px large-tile presets, drop
+    # batch_size back to ~8-16.
+    # NOTE (bit-for-bit comparisons): batch size does not change the math, but
+    # cuDNN/cuBLAS may pick different kernels for different batch shapes, which
+    # can perturb float rounding on some archs. Before adopting for a sweep that
+    # must match older runs byte-for-byte, A/B one scene at the old and new
+    # batch size and `cmp` the probability GeoTIFFs. See
+    # docs/INFERENCE_SPEEDUP_NOTES.md.
+    inference.data.batch_size: 256
+    inference.data.num_workers: 8
+
     inference.post_processing.smoothing.apply_simplification: true
     inference.post_processing.smoothing.simplify_tolerance_meters: 1.0
     inference.post_processing.filtering.apply_length_filter: false

@@ -251,7 +251,7 @@ class InferenceDataset(Dataset):
                         dst_col_start:dst_col_stop,
                     ] = real_data
 
-        data = data.astype(self.dtype)
+        data = data.astype(self.dtype, copy=False)
 
         # 5. Apply normalization or other configured transforms.
         if self.transform:

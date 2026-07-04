@@ -134,7 +134,7 @@ def _build_stitcher(output_path, global_shape, cfg, stitching_mode, blend_window
     return ProbabilityStitcher(
         output_path=str(output_path),
         shape=global_shape,
-        precision=cfg.inference.data.precision,
+        precision=cfg.inference.output.probability_precision,
         mode=stitching_mode,
         blend_window=blend_window,
         min_weight=min_weight,
@@ -329,7 +329,7 @@ def process_scene(
             reference_tif_path=input_image,
             output_tif_path=paths.probability_geotiff,
             shape=global_shape,
-            precision=cfg.inference.data.precision,
+            precision=cfg.inference.output.probability_precision,
             band_description="water_probability",
             tags=geotiff_tags,
         )
@@ -353,7 +353,7 @@ def process_scene(
                 reference_tif_path=input_image,
                 output_tif_path=geotiff_path,
                 shape=global_shape,
-                precision=cfg.inference.data.precision,
+                precision=cfg.inference.output.probability_precision,
                 band_description=f"water_probability_tta_{safe_transform}",
                 tags=tta_tags,
             )
@@ -377,7 +377,7 @@ def process_scene(
             reference_tif_path=input_image,
             output_tif_path=paths.binary_mask_geotiff,
             shape=global_shape,
-            precision=cfg.inference.data.precision,
+            precision=cfg.inference.output.probability_precision,
             threshold=cfg.inference.post_processing.threshold,
             tags=mask_tags,
         )
@@ -408,7 +408,7 @@ def process_scene(
             prob_map_path=str(paths.probability_memmap),
             reference_tif_path=input_image,
             shape=global_shape,
-            precision=cfg.inference.data.precision,
+            precision=cfg.inference.output.probability_precision,
             threshold=cfg.inference.post_processing.threshold,
             min_length_meters=min_length_meters,
             simplify_tolerance_meters=simplify_tolerance_meters,

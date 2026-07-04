@@ -281,6 +281,7 @@ def build_scene_metadata(
             "batch_size": int(cfg.inference.data.batch_size),
             "num_workers": int(cfg.inference.data.num_workers),
             "precision": str(cfg.inference.data.precision),
+            "probability_precision": str(cfg.inference.output.probability_precision),
             "device": str(device),
             "gpu_name": gpu_name,
             "gpu_vram_gb": vram_gb,

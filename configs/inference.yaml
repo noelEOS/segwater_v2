@@ -105,6 +105,12 @@ inference:
     save_binary_mask_geotiff: false
     extract_shoreline: true
 
+    # Dtype of the intermediate probability memmap (and the dtype read back for
+    # GeoTIFF/mask/vectorizer). Independent of inference.data.precision, which
+    # controls input tile dtype and AMP compute precision. The final GeoTIFF
+    # pixel dtype is always float32 regardless of this setting.
+    probability_precision: "float16"  # Options: "float32" or "float16"
+
   # --- Science / Post-Processing Logic ---
   post_processing:
     threshold: 0.5           # The probability crossing point for the shoreline/mask.

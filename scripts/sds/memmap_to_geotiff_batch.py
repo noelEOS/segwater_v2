@@ -1,8 +1,9 @@
 #!/usr/bin/env python3
 """Convert probability-water memmaps to georeferenced GeoTIFFs.
 
-Inference runs write a raw ``*_probability_water.memmap`` (float32) plus a
-sidecar ``*_metadata.json`` per scene. The metadata carries everything needed to
+Inference runs write a raw ``*_probability_water.memmap`` (float32 or float16,
+per ``inference.output.probability_precision``) plus a sidecar
+``*_metadata.json`` per scene. The metadata carries everything needed to
 georeference the array (width, height, CRS, affine transform), so we do not need
 the original input ``.tif`` (whose recorded path may point at the training
 machine and not exist here).
@@ -62,7 +63,8 @@ def profile_from_metadata(meta: dict) -> tuple[dict, tuple[int, int], str]:
     a, b, c, d, e, f = inp["transform"][:6]
     transform = Affine(a, b, c, d, e, f)
 
-    precision = meta.get("inference", {}).get("precision", "float32")
+    inference_meta = meta.get("inference", {})
+    precision = inference_meta.get("probability_precision", inference_meta.get("precision", "float32"))
 
     profile = {
         "driver": "GTiff",

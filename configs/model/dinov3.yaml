@@ -1,0 +1,31 @@
+# DINOv3 ViT-B/16 + linear segmentation head.
+#
+# Wraps a HuggingFace DINOv3ViTModel (src/models/dinov3.py::DINOv3LinearSegmentation).
+# encoder_kwargs below are forwarded to the model constructor via
+# SegmentationModelFactory ("dinov3-linear" branch):
+#   - hf_model_name   : HF Hub id to load via DINOv3ViTModel.from_pretrained.
+#                       Requires network access or a populated HF cache
+#                       (e.g. HF_HUB_OFFLINE=1 + pre-downloaded weights) even
+#                       at inference time, since the backbone is instantiated
+#                       from this id before the fine-tuned state_dict is loaded.
+#   - patch_size      : Must match the checkpoint's actual ViT patch size (16
+#                       for vitb16). Only used to reshape patch tokens back to
+#                       a spatial grid; a mismatch silently misaligns output
+#                       rather than erroring.
+#   - freeze_strategy : "none" (default, full fine-tune) or "full" (linear
+#                       probe backbone-frozen checkpoint). Must match how the
+#                       checkpoint was trained.
+#
+# Select with: model=dinov3
+arch: dinov3-linear
+encoder_name: facebook/dinov3-vitb16-pretrain-lvd1689m
+dice_weight: 0.5
+ce_weight: 0.5
+label_smoothing: 0.05
+num_classes: 2
+in_channels: 2
+encoder_weights: null
+encoder_kwargs:
+  hf_model_name: facebook/dinov3-vitb16-pretrain-lvd1689m
+  patch_size: 16
+  freeze_strategy: none

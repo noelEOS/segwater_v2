@@ -6,10 +6,12 @@ defaults:
 
 # Optuna Configuration
 n_trials: 60
-# HyperbandPruner min_resource in global steps. 400 aligns rungs with
-# val_check_interval=400 (pruning possible at 400/800/1200); the previous
-# hardcoded 800 allowed pruning only at step 1200 under max_steps=1500.
-pruner_min_resource: 400
+# HyperbandPruner min_resource in global steps. 800 = the shipped HPO
+# protocol. Do NOT lower to 400: warmup_steps=500, so a rung at 400 ranks
+# trials mid-warmup (80% of base LR, cosine decay not started) and biases
+# pruning against high-LR configs — and base LR is itself a swept parameter.
+# With val checks at 400/800/1200, 800 is the earliest post-warmup rung.
+pruner_min_resource: 800
 
 # Database Storage (Resolves from .env, defaults to empty string)
 optuna_storage: ${oc.env:NEON_DB_URL, ''}

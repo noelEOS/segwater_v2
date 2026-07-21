@@ -62,7 +62,8 @@ def main(cfg: DictConfig):
     optimizer = build_adamw(
         model.parameters(),
         lr=cfg.trainer.base_learning_rate,
-        weight_decay=cfg.trainer.weight_decay
+        weight_decay=cfg.trainer.weight_decay,
+        perf_cfg=cfg.trainer.get("perf", None),
     )
 
     train_dl = datamodule.train_dataloader()

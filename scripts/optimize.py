@@ -95,7 +95,8 @@ def objective(trial: optuna.Trial, cfg: DictConfig):
     optimizer = build_adamw(
         model.parameters(),
         lr=cfg.trainer.base_learning_rate,
-        weight_decay=cfg.trainer.weight_decay
+        weight_decay=cfg.trainer.weight_decay,
+        perf_cfg=cfg.trainer.get("perf", None),
     )
     
     train_dl = datamodule.train_dataloader()
@@ -184,10 +185,10 @@ def main(cfg: DictConfig):
         storage = f"sqlite:///{cfg.output_dir}/optuna_sweep.db"
         print(f"No remote DB found. Falling back to local SQLite: {db_path}")
     
-    # min_resource is in global steps; with val_check_interval=400 a value of
-    # 400 gives Hyperband rungs at 400/800/1200 so bad trials can be pruned at
-    # ~1/3 cost instead of only at step 1200 (the old min_resource=800 left a
-    # single effective rung under max_steps=1500).
+    # min_resource is in global steps; default 800 = the shipped HPO protocol.
+    # See configs/config.yaml for why it must not drop below warmup_steps=500
+    # (a rung at 400 would rank trials mid-warmup, biasing against high-LR
+    # configs while base LR is itself a swept parameter).
     pruner = optuna.pruners.HyperbandPruner(min_resource=cfg.get("pruner_min_resource", 800))
 
     study = optuna.create_study(

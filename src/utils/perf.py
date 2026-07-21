@@ -54,16 +54,22 @@ def unwrap_compiled(model):
     return getattr(model, "_orig_mod", model)
 
 
-def build_adamw(params, lr: float, weight_decay: float):
-    """AdamW using the fused CUDA kernel when available, else the default impl.
+def build_adamw(params, lr: float, weight_decay: float, perf_cfg=None):
+    """AdamW; uses the fused CUDA kernel only when ``perf.fused_adamw`` is set.
 
-    fused=True requires the params to already live on a CUDA device at
-    construction time; callers must move the model to the device first.
+    The fused kernel's reduction order differs from the default (foreach)
+    implementation, so it is not bit-identical to legacy runs -> opt-in like
+    the other numerics-affecting switches. fused=True requires the params to
+    already live on a CUDA device at construction time; callers must move the
+    model to the device first.
     """
     params = list(params)
-    if torch.cuda.is_available() and params and params[0].is_cuda:
+    use_fused = perf_cfg is not None and bool(perf_cfg.get("fused_adamw", False))
+    if use_fused and torch.cuda.is_available() and params and params[0].is_cuda:
         try:
-            return torch.optim.AdamW(params, lr=lr, weight_decay=weight_decay, fused=True)
+            opt = torch.optim.AdamW(params, lr=lr, weight_decay=weight_decay, fused=True)
+            logger.info("[PERF] fused AdamW enabled.")
+            return opt
         except (RuntimeError, ValueError) as exc:
             logger.warning(f"[PERF] fused AdamW unavailable ({exc}); using default impl.")
     return torch.optim.AdamW(params, lr=lr, weight_decay=weight_decay)

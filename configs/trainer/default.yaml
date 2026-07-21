@@ -12,12 +12,13 @@ precision: "bf16"
 
 # Opt-in performance switches (numerics-affecting -> default off so existing
 # runs reproduce; see docs/TRAINING_SPEEDUP_NOTES.md). Enable per run, e.g.:
-#   trainer.perf.tf32=true trainer.perf.cudnn_benchmark=true trainer.perf.compile=true
+#   trainer.perf.tf32=true trainer.perf.cudnn_benchmark=true trainer.perf.compile=true trainer.perf.fused_adamw=true
 perf:
   tf32: false
   cudnn_benchmark: false
   compile: false
   compile_mode: null   # null = torch.compile default; or "reduce-overhead", "max-autotune"
+  fused_adamw: false   # fused CUDA AdamW kernel; not bit-identical to the default impl
 
 # wandb step-level logs (train/step_loss, train/learning_rate) are emitted
 # every N optimizer steps. Interval metrics are unaffected. N > 1 avoids a

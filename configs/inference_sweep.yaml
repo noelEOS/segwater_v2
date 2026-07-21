@@ -9,6 +9,12 @@ sweep:
   dry_run: false
   continue_on_error: true
 
+  # Checkpoint x preset groups run concurrently. 1 = previous serial behavior.
+  # With one model in VRAM at a time there is headroom for 2-4 groups sharing
+  # the GPU; each group's outputs are unchanged by contention (speed only).
+  # When >1, per-group stdout goes to <sweep_root>/logs/<group_id>.log.
+  max_parallel: 1
+
   # Use either input_images or input_dir + input_glob.
   # input_images:
   #  - "/home/noel/s1/S1_20231008_110652_25_1_4.tif"

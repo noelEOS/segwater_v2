@@ -9,6 +9,7 @@ from src.data.datamodule import CoastalDataModule
 from src.models.factory import SegmentationModelFactory
 from src.models.losses import CoastalCompositeLoss
 from src.engine.trainer import SpectralTrainer
+from src.utils.perf import apply_perf_flags, build_adamw, maybe_compile
 from dotenv import load_dotenv 
 import logging
 from optuna.storages import RDBStorage
@@ -80,16 +81,20 @@ def objective(trial: optuna.Trial, cfg: DictConfig):
         classes=cfg.model.num_classes,
         **_encoder_kwargs,
     )
-    
+    # Move to device before the optimizer is built (fused AdamW needs CUDA
+    # params at construction) and before the optional torch.compile wrap.
+    model = model.to(device)
+    model = maybe_compile(model, cfg.trainer.get("perf", None))
+
     loss_fn = CoastalCompositeLoss(
         ce_weight=cfg.model.ce_weight,
         dice_weight=cfg.model.dice_weight,
         label_smoothing=cfg.model.label_smoothing
     )
-    
-    optimizer = torch.optim.AdamW(
-        model.parameters(), 
-        lr=cfg.trainer.base_learning_rate, 
+
+    optimizer = build_adamw(
+        model.parameters(),
+        lr=cfg.trainer.base_learning_rate,
         weight_decay=cfg.trainer.weight_decay
     )
     
@@ -138,6 +143,7 @@ def objective(trial: optuna.Trial, cfg: DictConfig):
         gradient_clip_val=cfg.trainer.gradient_clip_val,
         num_classes=cfg.model.num_classes,
         accumulate_grad_batches=cfg.trainer.get("accumulate_grad_batches", 1),
+        log_every_n_steps=cfg.trainer.get("log_every_n_steps", 1),
     )
     
     best_iou,_ = trainer.fit(
@@ -155,6 +161,7 @@ def objective(trial: optuna.Trial, cfg: DictConfig):
 @hydra.main(version_base="1.3", config_path="../configs", config_name="config")
 def main(cfg: DictConfig):
     os.makedirs(cfg.output_dir, exist_ok=True)
+    apply_perf_flags(cfg.trainer.get("perf", None))
 
 
     if cfg.optuna_storage:
@@ -177,7 +184,11 @@ def main(cfg: DictConfig):
         storage = f"sqlite:///{cfg.output_dir}/optuna_sweep.db"
         print(f"No remote DB found. Falling back to local SQLite: {db_path}")
     
-    pruner = optuna.pruners.HyperbandPruner(min_resource=800)
+    # min_resource is in global steps; with val_check_interval=400 a value of
+    # 400 gives Hyperband rungs at 400/800/1200 so bad trials can be pruned at
+    # ~1/3 cost instead of only at step 1200 (the old min_resource=800 left a
+    # single effective rung under max_steps=1500).
+    pruner = optuna.pruners.HyperbandPruner(min_resource=cfg.get("pruner_min_resource", 800))
 
     study = optuna.create_study(
         direction="maximize",

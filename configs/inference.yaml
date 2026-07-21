@@ -12,6 +12,18 @@ inference:
   # failure instead of stopping the whole checkpoint-loaded process.
   continue_on_error: false
 
+  # --- Compute (opt-in performance; numerics-affecting -> defaults preserve
+  # legacy bit-for-bit behavior; see docs/INFERENCE_SPEEDUP_NOTES.md) ---
+  compute:
+    # Autocast dtype for the forward pass, decoupled from data.precision.
+    # null = legacy coupling (autocast follows data.precision; with float32
+    # storage this means autocast is silently disabled -> pure fp32 compute).
+    # "bfloat16" / "float16" enable tensor-core compute (~1.5-3x forward)
+    # while all stored products stay float32.
+    amp_dtype: null
+    # TF32 matmuls on Ampere+ for fp32 compute paths. Not bit-identical.
+    tf32: false
+
   # --- Input Data & Tiling Geometry ---
   data:
     # Single-scene input. This remains the default path for normal inference.
@@ -24,8 +36,13 @@ inference:
     input_dir: null
     input_glob: "*.tif"
 
+    # batch_size stays 8 here because this base config's default tiling is the
+    # 1024px large-tile mode (1280px model input). The native224 sweep presets
+    # override to 256/8 (see configs/inference_sweep.yaml common_overrides).
     batch_size: 8
-    num_workers: 4
+    num_workers: 8
+    # DataLoader prefetch queue depth per worker (torch default is 2).
+    prefetch_factor: 4
 
     # Tiling geometry is now explicit:
     #   tile_size   = valid center crop written/blended into the final probability map

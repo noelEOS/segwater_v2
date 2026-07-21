@@ -8,10 +8,12 @@ from src.data.datamodule import CoastalDataModule
 from src.models.factory import SegmentationModelFactory
 from src.models.losses import CoastalCompositeLoss
 from src.engine.trainer import SpectralTrainer
+from src.utils.perf import apply_perf_flags, build_adamw, maybe_compile, unwrap_compiled
 
 @hydra.main(version_base="1.3", config_path="../configs", config_name="config")
 def main(cfg: DictConfig):
     torch.manual_seed(cfg.seed)
+    apply_perf_flags(cfg.trainer.get("perf", None))
     
     wandb.init(
         project=cfg.project_name,
@@ -46,19 +48,23 @@ def main(cfg: DictConfig):
         classes=cfg.model.num_classes,
         **_encoder_kwargs,
     )
-    
+    # Move to device before the optimizer is built (fused AdamW needs CUDA
+    # params at construction) and before the optional torch.compile wrap.
+    model = model.to(device)
+    model = maybe_compile(model, cfg.trainer.get("perf", None))
+
     loss_fn = CoastalCompositeLoss(
         ce_weight=cfg.model.ce_weight,
         dice_weight=cfg.model.dice_weight,
         label_smoothing=cfg.model.label_smoothing
     )
-    
-    optimizer = torch.optim.AdamW(
-        model.parameters(), 
-        lr=cfg.trainer.base_learning_rate, 
+
+    optimizer = build_adamw(
+        model.parameters(),
+        lr=cfg.trainer.base_learning_rate,
         weight_decay=cfg.trainer.weight_decay
     )
-    
+
     train_dl = datamodule.train_dataloader()
     val_dl = datamodule.val_dataloader()
     
@@ -96,6 +102,7 @@ def main(cfg: DictConfig):
         encoder=cfg.model.encoder_name,
         seed=cfg.seed,
         accumulate_grad_batches=cfg.trainer.get("accumulate_grad_batches", 1),
+        log_every_n_steps=cfg.trainer.get("log_every_n_steps", 1),
     )
     
     os.makedirs(cfg.output_dir, exist_ok=True)
@@ -119,7 +126,7 @@ def main(cfg: DictConfig):
         
         # Load the best weights
         checkpoint = torch.load(best_ckpt_path, map_location=device, weights_only=True)
-        model.load_state_dict(checkpoint["model_state_dict"])
+        unwrap_compiled(model).load_state_dict(checkpoint["model_state_dict"])
         
         # Run test function
         test_metrics = trainer.test(test_dl)

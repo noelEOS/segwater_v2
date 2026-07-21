@@ -8,6 +8,7 @@ from typing import Dict, Any
 from tqdm import tqdm
 
 from src.utils.metrics import SegmentationMetrics
+from src.utils.perf import unwrap_compiled
 import logging
 
 logger = logging.getLogger(__name__)
@@ -29,6 +30,7 @@ class SpectralTrainer:
         encoder: str = "encoder",
         seed: int = 42,
         accumulate_grad_batches: int = 1,
+        log_every_n_steps: int = 1,
     ):
         self.model = model.to(device)
         self.arch = arch
@@ -41,6 +43,7 @@ class SpectralTrainer:
         self.use_amp = use_amp
         self.gradient_clip_val = gradient_clip_val
         self.accumulate_grad_batches = max(1, int(accumulate_grad_batches))
+        self.log_every_n_steps = max(1, int(log_every_n_steps))
 
         # Resolve the torch dtype
         self.amp_dtype = torch.bfloat16 if precision == "bf16" else torch.float16
@@ -62,7 +65,10 @@ class SpectralTrainer:
         else:
             self.scaler = torch.amp.GradScaler("cpu", enabled=scaler_enabled)
         
-        self.train_metrics = SegmentationMetrics(num_classes=num_classes, ignore_index=ignore_index, device=device.type)
+        # Train metrics are diagnostic-only: keep just the confusion matrix and
+        # derive mIoU/F1 from it at the logging interval, instead of updating
+        # three torchmetrics objects every micro-batch.
+        self.train_metrics = SegmentationMetrics(num_classes=num_classes, ignore_index=ignore_index, device=device.type, cm_only=True)
         self.val_metrics = SegmentationMetrics(num_classes=num_classes, ignore_index=ignore_index, device=device.type)
 
     def fit(
@@ -97,7 +103,10 @@ class SpectralTrainer:
             while global_step < max_steps:
                 self.model.train()
                 self.train_metrics.reset()
-                total_loss = 0.0
+                # Losses accumulate on-device; .item() (a hard GPU->CPU sync
+                # that defeats async execution) is only called at the logging
+                # interval, not per micro-batch.
+                total_loss = torch.zeros((), device=self.device)
                 num_opt_steps = 0
 
                 with tqdm(total=val_check_interval, desc=f"Train [Steps {global_step} - {global_step+val_check_interval}]", leave=False) as pbar:
@@ -105,7 +114,7 @@ class SpectralTrainer:
                         # Accumulate gradients over `accum` micro-batches, then take
                         # a single optimizer step (== one global_step).
                         self.optimizer.zero_grad(set_to_none=True)
-                        step_loss = 0.0
+                        step_loss = torch.zeros((), device=self.device)
 
                         for _ in range(accum):
                             try:
@@ -128,7 +137,7 @@ class SpectralTrainer:
 
                             preds = torch.argmax(logits, dim=1)
                             self.train_metrics.update(preds, y)
-                            step_loss += loss.item() / accum
+                            step_loss += loss.detach()
 
                         if self.gradient_clip_val > 0.0:
                             self.scaler.unscale_(self.optimizer)
@@ -140,14 +149,14 @@ class SpectralTrainer:
                         if self.scheduler is not None:
                             self.scheduler.step()
 
+                        step_loss = step_loss / accum
                         total_loss += step_loss
 
-                        current_lr = self.optimizer.param_groups[0]['lr']
-                        if wandb.run is not None:
+                        if wandb.run is not None and global_step % self.log_every_n_steps == 0:
                             wandb.log({
                                 "global_step": global_step,
-                                "train/step_loss": step_loss,
-                                "train/learning_rate": current_lr
+                                "train/step_loss": step_loss.item(),
+                                "train/learning_rate": self.optimizer.param_groups[0]['lr']
                             })
 
                         num_opt_steps += 1
@@ -156,7 +165,7 @@ class SpectralTrainer:
                         pbar.update(1)
                     
                 train_metrics_dict = self.train_metrics.compute()
-                train_loss = total_loss / max(1, num_opt_steps)
+                train_loss = (total_loss / max(1, num_opt_steps)).item()
                 
                 val_metrics_dict = self.val_epoch(val_dataloader)
                 val_miou = val_metrics_dict["mIoU"]
@@ -192,7 +201,9 @@ class SpectralTrainer:
                         
                         torch.save({
                             "step": global_step,
-                            "model_state_dict": self.model.state_dict(),
+                            # Unwrap so state-dict keys carry no torch.compile
+                            # `_orig_mod.` prefix and stay loadable everywhere.
+                            "model_state_dict": unwrap_compiled(self.model).state_dict(),
                             "optimizer_state_dict": self.optimizer.state_dict(),
                             "val_miou": val_miou
                         }, ckpt_path)
@@ -225,7 +236,7 @@ class SpectralTrainer:
         self.model.eval()
         self.val_metrics.reset()
         
-        total_loss = 0.0
+        total_loss = torch.zeros((), device=self.device)
         num_batches = 0
         
         for batch in tqdm(dataloader, desc="Validating", leave=False):
@@ -240,11 +251,11 @@ class SpectralTrainer:
             preds = torch.argmax(logits, dim=1)
             self.val_metrics.update(preds, y)
             
-            total_loss += loss.item()
+            total_loss += loss.detach()
             num_batches += 1
             
         metrics_dict = self.val_metrics.compute()
-        metrics_dict["loss"] = total_loss / max(1, num_batches)
+        metrics_dict["loss"] = (total_loss / max(1, num_batches)).item()
         
         return metrics_dict
         
@@ -253,7 +264,7 @@ class SpectralTrainer:
         self.model.eval()
         self.val_metrics.reset()
         
-        total_loss = 0.0
+        total_loss = torch.zeros((), device=self.device)
         num_batches = 0
         
         for batch in tqdm(dataloader, desc="Testing", leave=False):
@@ -268,11 +279,11 @@ class SpectralTrainer:
             preds = torch.argmax(logits, dim=1)
             self.val_metrics.update(preds, y)
             
-            total_loss += loss.item()
+            total_loss += loss.detach()
             num_batches += 1
             
         metrics_dict = self.val_metrics.compute()
-        metrics_dict["loss"] = total_loss / max(1, num_batches)
+        metrics_dict["loss"] = (total_loss / max(1, num_batches)).item()
         
         return metrics_dict
 

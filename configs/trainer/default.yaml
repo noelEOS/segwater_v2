@@ -10,5 +10,19 @@ gradient_clip_val: 1.0
 mixed_precision: true
 precision: "bf16"
 
+# Opt-in performance switches (numerics-affecting -> default off so existing
+# runs reproduce; see docs/TRAINING_SPEEDUP_NOTES.md). Enable per run, e.g.:
+#   trainer.perf.tf32=true trainer.perf.cudnn_benchmark=true trainer.perf.compile=true
+perf:
+  tf32: false
+  cudnn_benchmark: false
+  compile: false
+  compile_mode: null   # null = torch.compile default; or "reduce-overhead", "max-autotune"
+
+# wandb step-level logs (train/step_loss, train/learning_rate) are emitted
+# every N optimizer steps. Interval metrics are unaffected. N > 1 avoids a
+# GPU->CPU sync per step; 1 restores the old per-step logging.
+log_every_n_steps: 50
+
 # configs/trainer/default.yaml
 epochs: 1

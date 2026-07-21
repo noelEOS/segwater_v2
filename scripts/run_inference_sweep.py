@@ -5,6 +5,7 @@ import shutil
 import subprocess
 import sys
 import time
+from concurrent.futures import CancelledError, ThreadPoolExecutor, as_completed
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -107,11 +108,18 @@ def main():
     print(f"Expected checkpoint loads: {len(groups)}")
     print(f"Scene-level jobs: {len(images) * len(groups)}")
 
+    # Number of checkpoint x preset groups run concurrently. 1 (default)
+    # reproduces the previous strictly serial behavior with inherited stdout.
+    # >1 shares the GPU between groups (each group's own outputs are unchanged
+    # by contention) and redirects per-group output to logs/<group_id>.log.
+    max_parallel = max(1, int(sweep.get("max_parallel", 1)))
+
     manifest_rows = []
     command_lines = []
     started_at_sweep = utc_now_iso()
     t0_sweep = time.time()
 
+    group_specs = []
     for group_idx, (checkpoint, preset) in enumerate(groups, start=1):
         group_id = f"group_{group_idx:04d}__{sanitize_for_path(checkpoint['name'])}__{sanitize_for_path(preset['name'])}"
         image_list_path = sweep_root / "image_lists" / f"{group_id}.txt"
@@ -146,75 +154,133 @@ def main():
         command = " ".join(cmd)
         command_lines.append(command)
 
-        print(f"[{group_idx}/{len(groups)}] {run_name}")
-        print(f"  Image list: {image_list_path}")
-        if dry_run:
-            print(command)
+        group_specs.append(
+            {
+                "group_idx": group_idx,
+                "group_id": group_id,
+                "run_name": run_name,
+                "unsanitized_run_name": unsanitized_run_name,
+                "image_list_path": image_list_path,
+                "checkpoint": checkpoint,
+                "preset": preset,
+                "overrides": overrides,
+                "cmd": cmd,
+                "command": command,
+            }
+        )
 
+    def execute_group(spec: dict) -> dict:
         started_at = utc_now_iso()
         t0 = time.time()
-        return_code = ""
-        error_message = ""
-
-        if dry_run:
-            status = "dry_run"
-            finished_at = utc_now_iso()
-            elapsed_minutes = 0.0
+        if max_parallel > 1:
+            log_path = sweep_root / "logs" / f"{spec['group_id']}.log"
+            log_path.parent.mkdir(parents=True, exist_ok=True)
+            with log_path.open("w", encoding="utf-8") as log_file:
+                result = subprocess.run(spec["cmd"], stdout=log_file, stderr=subprocess.STDOUT)
         else:
-            result = subprocess.run(cmd)
-            return_code = result.returncode
-            finished_at = utc_now_iso()
-            elapsed_minutes = (time.time() - t0) / 60.0
-            status = "success" if result.returncode == 0 else "failed"
-            if result.returncode != 0:
-                error_message = f"run_inference.py returned exit code {result.returncode}"
-                print(f"FAILED GROUP: {run_name}")
+            result = subprocess.run(spec["cmd"])
+        status = "success" if result.returncode == 0 else "failed"
+        error_message = ""
+        if status == "failed":
+            error_message = f"run_inference.py returned exit code {result.returncode}"
+            print(f"FAILED GROUP: {spec['run_name']}")
+        return {
+            "status": status,
+            "return_code": result.returncode,
+            "started_at": started_at,
+            "finished_at": utc_now_iso(),
+            "elapsed_minutes": (time.time() - t0) / 60.0,
+            "error_message": error_message,
+        }
 
-        shoreline_format = overrides.get(
+    results = {}
+    if dry_run:
+        for spec in group_specs:
+            print(f"[{spec['group_idx']}/{len(groups)}] {spec['run_name']}")
+            print(f"  Image list: {spec['image_list_path']}")
+            print(spec["command"])
+            now = utc_now_iso()
+            results[spec["group_idx"]] = {
+                "status": "dry_run", "return_code": "", "started_at": now,
+                "finished_at": now, "elapsed_minutes": 0.0, "error_message": "",
+            }
+    elif max_parallel == 1:
+        for spec in group_specs:
+            print(f"[{spec['group_idx']}/{len(groups)}] {spec['run_name']}")
+            print(f"  Image list: {spec['image_list_path']}")
+            results[spec["group_idx"]] = execute_group(spec)
+            if results[spec["group_idx"]]["status"] == "failed" and not continue_on_error:
+                break
+    else:
+        print(f"Running up to {max_parallel} groups concurrently; per-group output -> {sweep_root / 'logs'}")
+        stopping = False
+        with ThreadPoolExecutor(max_workers=max_parallel) as pool:
+            futures = {}
+            for spec in group_specs:
+                print(f"[{spec['group_idx']}/{len(groups)}] queued: {spec['run_name']}")
+                futures[pool.submit(execute_group, spec)] = spec
+            for future in as_completed(futures):
+                spec = futures[future]
+                try:
+                    results[spec["group_idx"]] = future.result()
+                except CancelledError:
+                    continue
+                if results[spec["group_idx"]]["status"] == "failed" and not continue_on_error and not stopping:
+                    stopping = True
+                    pool.shutdown(wait=False, cancel_futures=True)
+
+    for spec in group_specs:
+        outcome = results.get(spec["group_idx"])
+        if outcome is None:
+            # Group never ran: an earlier group failed with continue_on_error
+            # false. (The old serial runner wrote no rows for these at all.)
+            outcome = {
+                "status": "skipped", "return_code": "", "started_at": "",
+                "finished_at": "", "elapsed_minutes": 0.0,
+                "error_message": "skipped after earlier group failure",
+            }
+        shoreline_format = spec["overrides"].get(
             "inference.post_processing.shoreline.output_format", "gpkg"
         )
 
         for image_idx, image in enumerate(images, start=1):
-            paths = build_scene_paths(root_dir, run_name, image, shoreline_format)
+            paths = build_scene_paths(root_dir, spec["run_name"], image, shoreline_format)
             manifest_rows.append(
                 {
                     "sweep_id": sweep_id,
-                    "group_id": group_id,
-                    "job_id": f"{group_id}__scene_{image_idx:04d}",
-                    "status": status,
-                    "return_code": return_code,
+                    "group_id": spec["group_id"],
+                    "job_id": f"{spec['group_id']}__scene_{image_idx:04d}",
+                    "status": outcome["status"],
+                    "return_code": outcome["return_code"],
                     "input_image": image,
-                    "image_list_file": str(image_list_path),
+                    "image_list_file": str(spec["image_list_path"]),
                     "scene_id": paths["scene_id"],
-                    "checkpoint_name": checkpoint["name"],
-                    "checkpoint_path": checkpoint["checkpoint_path"],
-                    "model_arch": checkpoint["model"]["arch"],
-                    "model_encoder": checkpoint["model"].get("encoder_name", ""),
-                    "preset_name": preset["name"],
-                    "tile_size": overrides.get("inference.data.tile_size", ""),
-                    "buffer_size": overrides.get("inference.data.buffer_size", ""),
-                    "stride": overrides.get("inference.data.stride", ""),
-                    "edge_policy": overrides.get("inference.data.edge_policy", ""),
-                    "stitching_mode": overrides.get("inference.stitching.mode", ""),
-                    "blend_window": overrides.get("inference.stitching.blend_window", ""),
-                    "tta_enabled": overrides.get("inference.tta.enabled", False),
-                    "tta_transforms": overrides.get("inference.tta.transforms", ""),
-                    "run_name": run_name,
-                    "unsanitized_run_name": unsanitized_run_name,
+                    "checkpoint_name": spec["checkpoint"]["name"],
+                    "checkpoint_path": spec["checkpoint"]["checkpoint_path"],
+                    "model_arch": spec["checkpoint"]["model"]["arch"],
+                    "model_encoder": spec["checkpoint"]["model"].get("encoder_name", ""),
+                    "preset_name": spec["preset"]["name"],
+                    "tile_size": spec["overrides"].get("inference.data.tile_size", ""),
+                    "buffer_size": spec["overrides"].get("inference.data.buffer_size", ""),
+                    "stride": spec["overrides"].get("inference.data.stride", ""),
+                    "edge_policy": spec["overrides"].get("inference.data.edge_policy", ""),
+                    "stitching_mode": spec["overrides"].get("inference.stitching.mode", ""),
+                    "blend_window": spec["overrides"].get("inference.stitching.blend_window", ""),
+                    "tta_enabled": spec["overrides"].get("inference.tta.enabled", False),
+                    "tta_transforms": spec["overrides"].get("inference.tta.transforms", ""),
+                    "run_name": spec["run_name"],
+                    "unsanitized_run_name": spec["unsanitized_run_name"],
                     "scene_output_dir": paths["scene_output_dir"],
                     "probability_geotiff": paths["probability_geotiff"],
                     "shoreline_geojson": paths["shoreline_geojson"],
                     "metadata_json": paths["metadata_json"],
-                    "started_at": started_at,
-                    "finished_at": finished_at,
-                    "elapsed_minutes": f"{elapsed_minutes:.4f}",
-                    "error_message": error_message,
-                    "command": command,
+                    "started_at": outcome["started_at"],
+                    "finished_at": outcome["finished_at"],
+                    "elapsed_minutes": f"{outcome['elapsed_minutes']:.4f}",
+                    "error_message": outcome["error_message"],
+                    "command": spec["command"],
                 }
             )
-
-        if status == "failed" and not continue_on_error:
-            break
 
     (sweep_root / "commands.txt").write_text("\n".join(command_lines) + "\n", encoding="utf-8")
 

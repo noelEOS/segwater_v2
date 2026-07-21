@@ -25,6 +25,7 @@ from src.utils.inference_outputs import (
     write_json,
     write_run_config_once,
 )
+from src.utils.perf import apply_perf_flags
 from src.utils.raster_export import memmap_to_geotiff, write_binary_mask_geotiff
 from src.utils.stitcher import ProbabilityStitcher
 from src.utils.tta import predict_once, predict_with_tta, validate_tta_transforms
@@ -217,12 +218,19 @@ def process_scene(
 
     logger.info(f"[DATA] Swath fully gridded. Total tiles to process: {len(dataset)}")
 
+    loader_kwargs = {}
+    if int(cfg.inference.data.num_workers) > 0:
+        # Deeper prefetch queue than the DataLoader default (2) so tile decode
+        # stays ahead of the GPU at large batch sizes. Values unchanged.
+        loader_kwargs["prefetch_factor"] = int(_get_optional_cfg(cfg.inference.data, "prefetch_factor", 4))
+
     dataloader = DataLoader(
         dataset,
         batch_size=cfg.inference.data.batch_size,
         shuffle=False,
         num_workers=cfg.inference.data.num_workers,
         pin_memory=True,
+        **loader_kwargs,
     )
     logger.info(f"[DATA] DataLoader active: BS={cfg.inference.data.batch_size}, Workers={cfg.inference.data.num_workers}")
 
@@ -271,8 +279,18 @@ def process_scene(
         logger.info("[TTA] Disabled.")
 
     logger.info("--- STAGE 5: COMMENCING NEURAL INFERENCE ---")
-    amp_dtype = torch.float16 if cfg.inference.data.precision == "float16" else torch.float32
-    logger.info(f"[INFERENCE] Executing with Automatic Mixed Precision (AMP) dtype: {amp_dtype}")
+    compute_cfg = _get_optional_cfg(cfg.inference, "compute", {})
+    amp_override = _get_optional_cfg(compute_cfg, "amp_dtype", None)
+    if amp_override is None:
+        # Legacy coupling: the autocast dtype follows the tile/storage
+        # precision. With the standard "float32" this passes an unsupported
+        # autocast dtype and PyTorch silently disables autocast, i.e. pure
+        # fp32 compute — kept as the default so outputs byte-match old runs.
+        amp_dtype = torch.float16 if cfg.inference.data.precision == "float16" else torch.float32
+        logger.info(f"[INFERENCE] Executing with Automatic Mixed Precision (AMP) dtype: {amp_dtype}")
+    else:
+        amp_dtype = {"float16": torch.float16, "bfloat16": torch.bfloat16}[str(amp_override)]
+        logger.info(f"[INFERENCE] inference.compute.amp_dtype override active: autocast dtype {amp_dtype} (stored products stay float32)")
 
     total_batches = len(dataloader)
 
@@ -295,6 +313,11 @@ def process_scene(
                 else:
                     probs = predict_once(model, images, num_classes=cfg.model.num_classes)
                     individual_tta_probs = {}
+
+            if amp_override is not None:
+                # Stitching/numpy expect float32 (numpy has no bfloat16).
+                probs = probs.float()
+                individual_tta_probs = {k: v.float() for k, v in individual_tta_probs.items()}
 
             stitcher.add_batch(probs, metadata)
 
@@ -509,6 +532,7 @@ def main(cfg: DictConfig):
         logger.info(f"[ENV] Detected GPU: {gpu_name} ({vram_gb:.2f} GB VRAM)")
         torch.backends.cudnn.benchmark = True
         logger.info("[ENV] cuDNN benchmarking enabled for static graph optimization.")
+        apply_perf_flags(_get_optional_cfg(cfg.inference, "compute", None))
 
     logger.info("--- STAGE 2: MODEL INSTANTIATION ---")
     model, saved_step, saved_miou = build_model_and_load_checkpoint(cfg, device)

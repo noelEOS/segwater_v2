@@ -128,6 +128,14 @@ inference:
     # pixel dtype is always float32 regardless of this setting.
     probability_precision: "float16"  # Options: "float32" or "float16"
 
+    # Keep the final probability memmap after all requested products are
+    # written. Default true = current behavior; the SDS/Demak sweep tooling
+    # reads these memmaps directly, so only set false for product-only runs
+    # (e.g. GeoTIFF+shoreline campaigns). Deletion happens after the last
+    # consumer (GeoTIFF/mask/vectorizer), and any product failure raises
+    # first — a scene can never end up with neither memmap nor products.
+    keep_probability_memmap: true
+
   # --- Science / Post-Processing Logic ---
   post_processing:
     threshold: 0.5           # The probability crossing point for the shoreline/mask.

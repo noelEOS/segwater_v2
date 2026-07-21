@@ -446,6 +446,18 @@ def process_scene(
     else:
         logger.info("[POST-PROC] Shoreline extraction bypassed via configuration.")
 
+    # All memmap consumers (GeoTIFF, mask, vectorizer) have run by this point,
+    # and any failure in them raises before we get here — so deletion can never
+    # leave a scene with neither memmap nor products.
+    keep_probability_memmap = bool(
+        _get_optional_cfg(cfg.inference.output, "keep_probability_memmap", True)
+    )
+    if not keep_probability_memmap:
+        memmap_path_obj = Path(paths.probability_memmap)
+        if memmap_path_obj.exists():
+            memmap_path_obj.unlink()
+            logger.info(f"[OUTPUT] Probability memmap deleted after product export: {memmap_path_obj}")
+
     elapsed = (time.time() - scene_start_time) / 60
     raster_metadata = read_raster_metadata(input_image)
 

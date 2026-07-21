@@ -196,7 +196,10 @@ class SpectralTrainer:
                 if save_dir is not None:
                     # If we have less than K checkpoints, or the current mIoU is better than the worst in our top K
                     if len(top_k_checkpoints) < keep_top_k or val_miou > top_k_checkpoints[0][0]:
-                        ckpt_name = f"{self.arch}_{self.encoder}_s{self.seed}_step{global_step}_miou{val_miou:.4f}.pth"
+                        # 6 decimals: 4-dp names produced ties, and the offline
+                        # "highest step wins" tie-break picked a non-best ckpt in
+                        # several audited seed dirs (cnx s19/s58, swin-b s42).
+                        ckpt_name = f"{self.arch}_{self.encoder}_s{self.seed}_step{global_step}_miou{val_miou:.6f}.pth"
                         ckpt_path = os.path.join(save_dir, ckpt_name)
                         
                         torch.save({
@@ -229,6 +232,13 @@ class SpectralTrainer:
                         
             # Return the path to the best checkpoint (the last item in our sorted list)
             best_ckpt_path = top_k_checkpoints[-1][1] if top_k_checkpoints else None
+            # Persist the full-float argmax as best.pth (relative symlink) so
+            # downstream loaders never depend on parsing rounded filenames.
+            if best_ckpt_path is not None:
+                link_path = os.path.join(save_dir, "best.pth")
+                if os.path.lexists(link_path):
+                    os.remove(link_path)
+                os.symlink(os.path.basename(best_ckpt_path), link_path)
             return best_val_miou, best_ckpt_path
 
     @torch.no_grad()

@@ -198,7 +198,7 @@ class SpectralTrainer:
                     if len(top_k_checkpoints) < keep_top_k or val_miou > top_k_checkpoints[0][0]:
                         # 6 decimals: 4-dp names produced ties, and the offline
                         # "highest step wins" tie-break picked a non-best ckpt in
-                        # several audited seed dirs (cnx s19/s58, swin-b s42).
+                        # 6 of 27 audited seed dirs (best_ckpt_audit.json 2026-07-15).
                         ckpt_name = f"{self.arch}_{self.encoder}_s{self.seed}_step{global_step}_miou{val_miou:.6f}.pth"
                         ckpt_path = os.path.join(save_dir, ckpt_name)
                         

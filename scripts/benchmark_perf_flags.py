@@ -12,7 +12,9 @@ Usage (from repo root, PYTHONPATH=.):
 """
 
 import argparse
+import glob
 import json
+import os
 import statistics
 import time
 
@@ -43,6 +45,12 @@ def main():
     ap.add_argument("--warmup", type=int, default=25)
     ap.add_argument("--steps", type=int, default=60)
     ap.add_argument("--encoder-weights", default="imagenet")
+    # Concurrency measurement: all N processes finish warmup, rendezvous at the
+    # barrier, and only then start their timed windows; each finisher keeps
+    # running untimed "linger" steps until every process has finished timing,
+    # so no timed step runs on a quieter GPU than intended.
+    ap.add_argument("--barrier-file", default=None)
+    ap.add_argument("--barrier-count", type=int, default=1)
     args = ap.parse_args()
 
     tf32, cudnn_bench, fused, compile_ = CELLS[args.cell]
@@ -95,10 +103,10 @@ def main():
     # Extra warmup for compile (graph capture + autotune) and cudnn autotune.
     warmup = args.warmup + (15 if compile_ else 0)
     data_ms, compute_ms, total_ms = [], [], []
-    torch.cuda.reset_peak_memory_stats()
 
     it = iter(dl)
-    for i in range(warmup + args.steps):
+
+    def one_step(timed: bool):
         t0 = time.perf_counter()
         batch = next(it)
         t1 = time.perf_counter()
@@ -115,14 +123,38 @@ def main():
         torch.cuda.synchronize()
         t2 = time.perf_counter()
 
-        if i >= warmup:
+        if timed:
             data_ms.append((t1 - t0) * 1e3)
             compute_ms.append((t2 - t1) * 1e3)
             total_ms.append((t2 - t0) * 1e3)
 
+    def wait_for(pattern, n):
+        while len(glob.glob(pattern)) < n:
+            time.sleep(0.5)
+
+    for _ in range(warmup):
+        one_step(timed=False)
+
+    if args.barrier_file:
+        open(f"{args.barrier_file}.ready.{os.getpid()}", "w").close()
+        wait_for(f"{args.barrier_file}.ready.*", args.barrier_count)
+
+    torch.cuda.reset_peak_memory_stats()
+    for _ in range(args.steps):
+        one_step(timed=True)
+
+    if args.barrier_file:
+        open(f"{args.barrier_file}.done.{os.getpid()}", "w").close()
+        # keep the GPU loaded until every process has finished its timed window
+        while len(glob.glob(f"{args.barrier_file}.done.*")) < args.barrier_count:
+            one_step(timed=False)
+
     result = {
+        "arch": args.arch,
         "encoder": args.encoder,
         "cell": args.cell,
+        "concurrency": args.barrier_count,
+        "mps": bool(os.environ.get("CUDA_MPS_PIPE_DIRECTORY")),
         **{k: v for k, v in perf_cfg.items() if k != "compile_mode"},
         "batch_size": args.batch_size,
         "steps_timed": args.steps,

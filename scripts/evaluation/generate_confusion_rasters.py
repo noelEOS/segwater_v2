@@ -15,10 +15,15 @@ Confusion-matrix encoding
   2 = FP   (pred=1, ref=0)
   3 = FN   (pred=0, ref=1)
   4 = TN   (pred=0, ref=0)
+  5 = outside valid mask (excluded from metrics; only present with --valid-mask-path)
   0 = nodata (reference nodata pixels inside the overlap window)
 
 Metrics recomputed from the rasters must match the per_scene_metrics.csv values
-produced by the benchmark evaluator.
+produced by the benchmark evaluator. IMPORTANT: to reproduce the evaluator's
+metrics you must pass the SAME --valid-mask-path / --valid-mask-value the
+evaluation used (e.g. the GSHHG/JRC combined mask in the Semarang configs).
+Without it the confusion matrix is computed over ~1.5x more pixels (easy
+open-water / inland pixels the evaluation excludes), which inflates IoU.
 
 Usage
 -----
@@ -72,13 +77,13 @@ def _rounded_window(bounds, transform):
     return window_from_bounds(left, bottom, right, top, transform=transform).round_offsets().round_lengths()
 
 
-def _intersection_bounds(ref_bounds, pred_bounds):
-    left = max(ref_bounds.left, pred_bounds.left)
-    bottom = max(ref_bounds.bottom, pred_bounds.bottom)
-    right = min(ref_bounds.right, pred_bounds.right)
-    top = min(ref_bounds.top, pred_bounds.top)
+def _intersection_bounds(*bounds_list):
+    left = max(b.left for b in bounds_list)
+    bottom = max(b.bottom for b in bounds_list)
+    right = min(b.right for b in bounds_list)
+    top = min(b.top for b in bounds_list)
     if left >= right or bottom >= top:
-        raise ValueError("Reference and prediction rasters do not overlap spatially.")
+        raise ValueError("Input rasters do not overlap spatially.")
     return left, bottom, right, top
 
 
@@ -98,6 +103,7 @@ CM_TP = np.uint8(1)
 CM_FP = np.uint8(2)
 CM_FN = np.uint8(3)
 CM_TN = np.uint8(4)
+CM_OUTSIDE_MASK = np.uint8(5)
 CM_NODATA = np.uint8(0)
 
 
@@ -108,6 +114,7 @@ def _confusion_matrix_array(
     reference_nodata_values: list,
     probability_threshold: float,
     probability_comparison: str,
+    external_valid_mask: np.ndarray | None = None,
 ) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
     """
     Returns (binary_mask_2d, confusion_map_2d, valid_mask_2d).
@@ -115,10 +122,19 @@ def _confusion_matrix_array(
     binary_mask   – uint8 array with same shape as reference (overlap window)
     confusion_map – uint8 CM label array, same shape
     valid_mask    – bool mask of pixels used in metric computation
+
+    external_valid_mask, when provided, is a boolean array (True = keep) applied
+    IN ADDITION to reference-nodata exclusion. Pixels dropped by it are labelled
+    CM_OUTSIDE_MASK (5) so the raster stays inspectable while those pixels are
+    excluded from tp/fp/fn/tn exactly as in the evaluator.
     """
     valid_mask = np.ones(reference.shape, dtype=bool)
     if reference_nodata_values:
         valid_mask &= ~np.isin(reference, reference_nodata_values)
+    outside_mask = np.zeros(reference.shape, dtype=bool)
+    if external_valid_mask is not None:
+        outside_mask = valid_mask & ~external_valid_mask
+        valid_mask &= external_valid_mask
 
     binary_mask = _threshold(probability, probability_threshold, probability_comparison)
 
@@ -133,6 +149,9 @@ def _confusion_matrix_array(
     cm[valid_mask & (binary_mask == 0) & (ref_binary == 1)] = CM_FN
     # TN
     cm[valid_mask & (binary_mask == 0) & (ref_binary == 0)] = CM_TN
+    # Reference-valid pixels dropped only because they fall outside the external
+    # valid mask (kept visible, excluded from metrics).
+    cm[outside_mask] = CM_OUTSIDE_MASK
 
     return binary_mask, cm, valid_mask
 
@@ -166,6 +185,8 @@ def process_scene(
     probability_comparison: str,
     resolution_atol: float,
     overwrite: bool,
+    valid_mask_path: str | None = None,
+    valid_mask_value: int = 1,
 ) -> dict:
     """Process one scene and write binary_mask.tif + confusion_matrix.tif."""
     scene_dir = output_dir / model / s1_id
@@ -177,10 +198,13 @@ def process_scene(
 
     ref_profile = _read_profile(reference_path)
     pred_profile = _read_profile(prediction_path)
+    mask_profile = _read_profile(valid_mask_path) if valid_mask_path else None
 
     # -- CRS check
     if ref_profile["crs"] != pred_profile["crs"]:
         raise ValueError(f"CRS mismatch: {ref_profile['crs']} vs {pred_profile['crs']}")
+    if mask_profile is not None and ref_profile["crs"] != mask_profile["crs"]:
+        raise ValueError(f"CRS mismatch (valid mask): {ref_profile['crs']} vs {mask_profile['crs']}")
 
     # -- Resolution check
     dx = abs(ref_profile["res_x"] - pred_profile["res_x"])
@@ -190,8 +214,21 @@ def process_scene(
             f"Resolution mismatch: ref=({ref_profile['res_x']},{ref_profile['res_y']}), "
             f"pred=({pred_profile['res_x']},{pred_profile['res_y']})"
         )
+    if mask_profile is not None:
+        mdx = abs(ref_profile["res_x"] - mask_profile["res_x"])
+        mdy = abs(ref_profile["res_y"] - mask_profile["res_y"])
+        if mdx > resolution_atol or mdy > resolution_atol:
+            raise ValueError(
+                f"Resolution mismatch (valid mask): ref=({ref_profile['res_x']},{ref_profile['res_y']}), "
+                f"mask=({mask_profile['res_x']},{mask_profile['res_y']})"
+            )
 
-    overlap_bounds = _intersection_bounds(ref_profile["bounds"], pred_profile["bounds"])
+    # Match the evaluator: when a valid mask is supplied its bounds join the
+    # overlap intersection, so the window is identical to the evaluation's.
+    overlap_inputs = [ref_profile["bounds"], pred_profile["bounds"]]
+    if mask_profile is not None:
+        overlap_inputs.append(mask_profile["bounds"])
+    overlap_bounds = _intersection_bounds(*overlap_inputs)
 
     with rasterio.open(reference_path) as src_ref, rasterio.open(prediction_path) as src_pred:
         ref_window = _rounded_window(overlap_bounds, src_ref.transform)
@@ -200,6 +237,17 @@ def process_scene(
         probability = src_pred.read(1, window=pred_window)
         overlap_transform = _window_transform(src_ref.transform, ref_window)
         crs = src_ref.crs
+
+    external_valid_mask = None
+    if valid_mask_path:
+        with rasterio.open(valid_mask_path) as src_mask:
+            mask_window = _rounded_window(overlap_bounds, src_mask.transform)
+            mask_arr = src_mask.read(1, window=mask_window)
+        if mask_arr.shape != reference.shape:
+            raise ValueError(
+                f"Shape mismatch (valid mask): ref={reference.shape}, mask={mask_arr.shape}"
+            )
+        external_valid_mask = mask_arr == valid_mask_value
 
     if reference.shape != probability.shape:
         raise ValueError(
@@ -213,6 +261,7 @@ def process_scene(
         reference_nodata_values=reference_nodata_values,
         probability_threshold=probability_threshold,
         probability_comparison=probability_comparison,
+        external_valid_mask=external_valid_mask,
     )
 
     metrics = _metrics_from_cm_array(cm_array)
@@ -301,6 +350,23 @@ def parse_args(argv=None) -> argparse.Namespace:
         default=1e-12,
         help="Absolute tolerance for resolution comparison (default: 1e-12)",
     )
+    p.add_argument(
+        "--valid-mask-path",
+        default=None,
+        metavar="TIF",
+        help=(
+            "External valid-mask raster. Pass the SAME mask the evaluation used so "
+            "the confusion matrix (and its recomputed IoU/P/R) is over the identical "
+            "valid-pixel set. Pixels outside the mask are labelled 5 in the CM raster "
+            "and excluded from metrics. Omit to reproduce the legacy (mask-free) behaviour."
+        ),
+    )
+    p.add_argument(
+        "--valid-mask-value",
+        type=int,
+        default=1,
+        help="Value in --valid-mask-path that marks valid pixels (default: 1)",
+    )
     p.add_argument("--overwrite", action="store_true", help="Overwrite existing output files")
     return p.parse_args(argv)
 
@@ -339,6 +405,11 @@ def main(argv=None) -> None:
         print(f"Threshold mode: LOO (optimize_metric={args.optimize_metric}, {len(loo_thresholds)} models)")
     else:
         print(f"Threshold: {args.comparison} {args.threshold}")
+    if args.valid_mask_path:
+        print(f"Valid mask: {args.valid_mask_path} (value=={args.valid_mask_value})")
+    else:
+        print("Valid mask: NONE (metrics over reference-nodata-only pixel set; "
+              "will NOT match evaluator metrics that used an external mask)")
 
     results = []
     for _, row in success_rows.iterrows():
@@ -370,6 +441,8 @@ def main(argv=None) -> None:
                 probability_comparison=args.comparison,
                 resolution_atol=args.resolution_atol,
                 overwrite=args.overwrite,
+                valid_mask_path=args.valid_mask_path,
+                valid_mask_value=args.valid_mask_value,
             )
             status = result["status"]
             if status == "success":

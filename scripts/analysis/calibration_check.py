@@ -245,12 +245,20 @@ def stream_scene(
     fine_bins: int,
     block_rows: int,
     log,
+    platt: tuple[float, float] | None = None,
 ) -> tuple[FineAccumulator, dict]:
     """One streaming pass; returns the fine accumulator and per-scene diagnostics.
 
     Mirrors _load_overlap_reference_and_probability exactly: same overlap bounds,
     same rounded windows, same valid_mask = (~nodata) & (external == value),
     applied identically to label and prediction.
+
+    platt: optional (a, b) fitted on the training validation split
+    (scripts/evaluation/fit_platt_scaling.py). When given, probabilities are
+    recalibrated on the fly as p' = sigmoid(a*logit(p) + b) with p clamped to
+    [1e-6, 1-1e-6] before the logit (float16-saturated pixels stay saturated;
+    the transform is monotone so binary decisions equal thresholding p at
+    tau_eq = sigmoid(-b/a)). Rasters on disk are never modified.
     """
     ref_profile = read_profile(reference_path)
     pred_profile = read_profile(prediction_path)
@@ -336,6 +344,10 @@ def stream_scene(
 
             y = np.isin(reference[valid], reference_water_values).astype(np.float64)
             p = probability[valid].astype(np.float64)
+            if platt is not None:
+                a_p, b_p = platt
+                p = np.clip(p, 1e-6, 1.0 - 1e-6)
+                p = 1.0 / (1.0 + np.exp(-(a_p * (np.log(p) - np.log1p(-p)) + b_p)))
             # the SAME boolean `valid` indexes both arrays -> identical mask
             acc.update(p, y)
             diag["valid_pixels_after_all_masks"] += int(valid.sum())
@@ -619,6 +631,7 @@ def run_model(model_name: str, df_model: pd.DataFrame, cfg: dict, out_root: Path
             fine_bins=cfg["fine_bins"],
             block_rows=cfg["block_rows"],
             log=log,
+            platt=cfg.get("platt"),
         )
         metrics, q_tab, f_tab = metrics_from_acc(acc, cfg["coarse_bins"])
         metrics["binning_params"] = {
@@ -721,7 +734,21 @@ def main():
     ap.add_argument("--fine-bins", type=int, default=1000)
     ap.add_argument("--coarse-bins", type=int, default=15)
     ap.add_argument("--block-rows", type=int, default=512)
+    ap.add_argument("--platt-a", type=float, default=None,
+                    help="Platt slope a (with --platt-b): recalibrate p on the fly "
+                         "as sigmoid(a*logit(p)+b); outputs go to calibration_platt/")
+    ap.add_argument("--platt-b", type=float, default=None,
+                    help="Platt offset b (with --platt-a)")
+    ap.add_argument("--out-subdir", default=None,
+                    help="Output subdir under run-dir (default: calibration, or "
+                         "calibration_platt when --platt-a/b are given)")
     args = ap.parse_args()
+
+    if (args.platt_a is None) != (args.platt_b is None):
+        raise SystemExit("--platt-a and --platt-b must be given together")
+    platt = (args.platt_a, args.platt_b) if args.platt_a is not None else None
+    if platt is not None and platt[0] <= 0:
+        raise SystemExit(f"--platt-a = {platt[0]} <= 0 is not a valid Platt slope")
 
     run_dir = args.run_dir.resolve()
     manifest_csv = run_dir / "evaluation_manifest.csv"
@@ -744,9 +771,11 @@ def main():
         "fine_bins": args.fine_bins,
         "coarse_bins": args.coarse_bins,
         "block_rows": args.block_rows,
+        "platt": platt,
     }
 
-    out_root = run_dir / "calibration"
+    out_root = run_dir / (args.out_subdir or
+                          ("calibration_platt" if platt else "calibration"))
     out_root.mkdir(parents=True, exist_ok=True)
     log_path = out_root / "log.txt"
     log_fh = open(log_path, "w")
@@ -759,6 +788,10 @@ def main():
     log(f"calibration_check  {datetime.now(timezone.utc).isoformat()}")
     log(f"run_dir: {run_dir}")
     log(f"valid_mask_path: {cfg['valid_mask_path']}  value={cfg['valid_mask_value']}")
+    if platt:
+        tau_eq = 1.0 / (1.0 + np.exp(platt[1] / platt[0]))
+        log(f"Platt recalibration ACTIVE: a={platt[0]:.6f} b={platt[1]:+.6f} "
+            f"(tau_eq={tau_eq:.4f}); baseline calibration/ outputs untouched")
     log(f"reference_water_values={ref_water}  reference_nodata_values={ref_nodata}")
     log("Masking: per tile, valid = (~reference_nodata) & (external_mask == value), "
         "applied with the SAME boolean index to label AND prediction.")
@@ -790,6 +823,7 @@ def main():
         "reference_water_values": ref_water,
         "reference_nodata_values": ref_nodata,
         "models": models,
+        "platt": {"a": platt[0], "b": platt[1]} if platt else None,
     }
     with open(out_root / "run_config.json", "w") as fh:
         json.dump(run_config, fh, indent=2)

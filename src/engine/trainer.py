@@ -84,7 +84,14 @@ class SpectralTrainer:
             #import optuna
             import wandb
             import os
-            
+
+            if wandb.run is not None:
+                # Plot every series against global_step by default. With
+                # log_every_n_steps>1 wandb's internal _step counts log CALLS,
+                # which misaligns sparse new runs vs legacy per-step runs.
+                wandb.define_metric("global_step")
+                wandb.define_metric("*", step_metric="global_step")
+
             global_step = 0
             top_k_checkpoints = [] # List to track (val_miou, ckpt_path)
             best_val_miou = 0.0

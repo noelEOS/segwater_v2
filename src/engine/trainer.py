@@ -79,7 +79,8 @@ class SpectralTrainer:
             val_check_interval: int,
             trial=None,
             save_dir: str = None,
-            keep_top_k: int = 3
+            keep_top_k: int = 3,
+            save_last: bool = False,
         ):
             #import optuna
             import wandb
@@ -93,6 +94,7 @@ class SpectralTrainer:
                 wandb.define_metric("*", step_metric="global_step")
 
             global_step = 0
+            val_miou = float("nan")  # defined even if the loop body never runs
             top_k_checkpoints = [] # List to track (val_miou, ckpt_path)
             best_val_miou = 0.0
 
@@ -237,6 +239,22 @@ class SpectralTrainer:
                     if trial.should_prune():
                         raise optuna.TrialPruned(f"Pruned at step {global_step} with mIoU {val_miou:.4f}")
                         
+            # Optionally persist the FINAL-step weights alongside the top-k.
+            # Rationale: with an honest (pair-pure) val, generalization peaks
+            # early, so top-k keeps only early checkpoints — save_last preserves
+            # a late checkpoint for early-vs-late external comparisons. Never
+            # enters top-k and is never auto-pruned.
+            if save_dir is not None and save_last:
+                last_name = f"{self.arch}_{self.encoder}_s{self.seed}_step{global_step}_last.pth"
+                last_path = os.path.join(save_dir, last_name)
+                torch.save({
+                    "step": global_step,
+                    "model_state_dict": unwrap_compiled(self.model).state_dict(),
+                    "optimizer_state_dict": self.optimizer.state_dict(),
+                    "val_miou": val_miou,
+                }, last_path)
+                print(f"Saved final-step checkpoint -> {last_name}")
+
             # Return the path to the best checkpoint (the last item in our sorted list)
             best_ckpt_path = top_k_checkpoints[-1][1] if top_k_checkpoints else None
             # Persist the full-float argmax as best.pth (relative symlink) so

@@ -20,6 +20,12 @@ perf:
   compile_mode: null   # null = torch.compile default; or "reduce-overhead", "max-autotune"
   fused_adamw: false   # fused CUDA AdamW kernel; not bit-identical to the default impl
 
+# Also save the FINAL-step weights (as *_step<N>_last.pth, outside top-k and
+# never pruned). For early-vs-late checkpoint comparisons on external evals;
+# selection still uses best val mIoU. Applies to stage-2 (train.py) only —
+# HPO trials never save a last checkpoint.
+save_last: true
+
 # wandb step-level logs (train/step_loss, train/learning_rate) are emitted
 # every N optimizer steps. Interval metrics are unaffected. N > 1 avoids a
 # GPU->CPU sync per step; 1 restores the old per-step logging.

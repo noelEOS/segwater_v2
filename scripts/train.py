@@ -113,9 +113,10 @@ def main(cfg: DictConfig):
         train_dataloader=train_dl,
         val_dataloader=val_dl,
         max_steps=total_steps,
-        val_check_interval=cfg.trainer.val_check_interval, 
+        val_check_interval=cfg.trainer.val_check_interval,
         save_dir=cfg.output_dir,
-        keep_top_k=3
+        keep_top_k=3,
+        save_last=cfg.trainer.get("save_last", False),
     )
     
     # 2. Evaluate on Holdout Test Dataset

@@ -117,6 +117,8 @@ def main(cfg: DictConfig):
         save_dir=cfg.output_dir,
         keep_top_k=3,
         save_last=cfg.trainer.get("save_last", False),
+        snapshot_last_frac=cfg.trainer.get("snapshots", {}).get("last_frac", 0.0),
+        snapshot_every_n_vals=cfg.trainer.get("snapshots", {}).get("every_n_vals", 0),
     )
     
     # 2. Evaluate on Holdout Test Dataset

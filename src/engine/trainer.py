@@ -81,6 +81,8 @@ class SpectralTrainer:
             save_dir: str = None,
             keep_top_k: int = 3,
             save_last: bool = False,
+            snapshot_last_frac: float = 0.0,
+            snapshot_every_n_vals: int = 0,
         ):
             #import optuna
             import wandb
@@ -94,6 +96,7 @@ class SpectralTrainer:
                 wandb.define_metric("*", step_metric="global_step")
 
             global_step = 0
+            n_vals = 0  # completed validations, for the snapshot cadence
             val_miou = float("nan")  # defined even if the loop body never runs
             top_k_checkpoints = [] # List to track (val_miou, ckpt_path)
             best_val_miou = 0.0
@@ -191,6 +194,7 @@ class SpectralTrainer:
                     logger.warning(f"Non-finite val mIoU ({val_miou}) at step {global_step}; treating as 0.0")
                     val_miou = 0.0
 
+                n_vals += 1
                 best_val_miou = max(best_val_miou, val_miou)
                 
                 if wandb.run is not None:
@@ -232,7 +236,25 @@ class SpectralTrainer:
                             if os.path.exists(removed_path):
                                 os.remove(removed_path)
                                 print(f"Removed older checkpoint -> {os.path.basename(removed_path)} (mIoU: {removed_miou:.4f})")
-                        
+
+                # --- MODEL-ONLY SNAPSHOTS (stage-2 late-window / periodic spine) ---
+                # Saved at every val in the final `snapshot_last_frac` of the run
+                # (post-LR-decay window) and/or every `snapshot_every_n_vals` vals.
+                # Model-only (no optimizer state): ~1/3 the size, and no consumer
+                # reads optimizer state. Never enter top_k_checkpoints -> never
+                # pruned and never picked by the best.pth symlink.
+                in_late = snapshot_last_frac > 0 and global_step >= max_steps * (1 - snapshot_last_frac)
+                periodic = snapshot_every_n_vals > 0 and n_vals % snapshot_every_n_vals == 0
+                if save_dir is not None and (in_late or periodic):
+                    snap_name = f"{self.arch}_{self.encoder}_s{self.seed}_step{global_step}_snap_miou{val_miou:.6f}.pth"
+                    snap_path = os.path.join(save_dir, snap_name)
+                    torch.save({
+                        "step": global_step,
+                        "model_state_dict": unwrap_compiled(self.model).state_dict(),
+                        "val_miou": val_miou,
+                    }, snap_path)
+                    print(f"Step {global_step}: Saved snapshot -> {snap_name}")
+
                 if trial is not None:
                     #import optuna
                     trial.report(val_miou, step=global_step)

@@ -26,6 +26,14 @@ perf:
 # HPO trials never save a last checkpoint.
 save_last: true
 
+# Model-only checkpoint snapshots (stage-2 only; HPO never snapshots). last_frac
+# saves at every val check in the final fraction of the run (post-LR-decay);
+# every_n_vals also saves every Nth val across the whole run (0 = off). Outside
+# top-k, never pruned; ~1/3 the size of a full checkpoint (no optimizer state).
+snapshots:
+  last_frac: 0.25
+  every_n_vals: 4
+
 # wandb step-level logs (train/step_loss, train/learning_rate) are emitted
 # every N optimizer steps. Interval metrics are unaffected. N > 1 avoids a
 # GPU->CPU sync per step; 1 restores the old per-step logging.

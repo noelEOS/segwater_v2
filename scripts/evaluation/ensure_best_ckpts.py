@@ -74,7 +74,9 @@ def main() -> None:
             if not seed_dir.is_dir():
                 raise SystemExit(f"Missing seed dir: {seed_dir}")
             step_ckpts = [p for p in sorted(seed_dir.glob("*.pth"))
-                          if p.name != "best.pth"]
+                          if p.name != "best.pth"
+                          and "_snap_" not in p.name
+                          and not p.name.endswith("_last.pth")]
             if not step_ckpts:
                 raise SystemExit(f"No step checkpoints in {seed_dir}")
 

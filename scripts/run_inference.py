@@ -131,7 +131,7 @@ def build_model_and_load_checkpoint(cfg, device):
     return model, saved_step, saved_miou
 
 
-def _build_stitcher(output_path, global_shape, cfg, stitching_mode, blend_window, min_weight, keep_accumulator_memmaps):
+def _build_stitcher(output_path, global_shape, cfg, stitching_mode, blend_window, min_weight, keep_accumulator_memmaps, stitcher_device=None):
     return ProbabilityStitcher(
         output_path=str(output_path),
         shape=global_shape,
@@ -140,10 +140,11 @@ def _build_stitcher(output_path, global_shape, cfg, stitching_mode, blend_window
         blend_window=blend_window,
         min_weight=min_weight,
         keep_accumulator_memmaps=keep_accumulator_memmaps,
+        device=stitcher_device,
     )
 
 
-def _build_tta_debug_stitchers(paths, global_shape, cfg, transforms, stitching_mode, blend_window, min_weight, keep_accumulator_memmaps):
+def _build_tta_debug_stitchers(paths, global_shape, cfg, transforms, stitching_mode, blend_window, min_weight, keep_accumulator_memmaps, stitcher_device=None):
     """Create one stitcher per inverse-transformed TTA view for QGIS inspection."""
     stitchers = {}
     for transform in transforms:
@@ -157,6 +158,7 @@ def _build_tta_debug_stitchers(paths, global_shape, cfg, transforms, stitching_m
             blend_window=blend_window,
             min_weight=min_weight,
             keep_accumulator_memmaps=keep_accumulator_memmaps,
+            stitcher_device=stitcher_device,
         )
     return stitchers
 
@@ -242,6 +244,15 @@ def process_scene(
     blend_window = _get_optional_cfg(stitching_cfg, "blend_window", "hann")
     min_weight = _get_optional_cfg(stitching_cfg, "min_weight", 1e-3)
     keep_accumulator_memmaps = bool(_get_optional_cfg(stitching_cfg, "keep_accumulator_memmaps", False))
+    accumulate_on_device = bool(_get_optional_cfg(stitching_cfg, "accumulate_on_device", False))
+    stitcher_device = str(device) if accumulate_on_device else None
+    if accumulate_on_device:
+        logger.info(
+            "[STITCHER] inference.stitching.accumulate_on_device active: canvases on %s "
+            "(~%.2f GB VRAM for weighted_blend accumulators)",
+            device,
+            2 * global_shape[0] * global_shape[1] * 4 / 1e9,
+        )
 
     stitcher = _build_stitcher(
         output_path=paths.probability_memmap,
@@ -251,6 +262,7 @@ def process_scene(
         blend_window=blend_window,
         min_weight=min_weight,
         keep_accumulator_memmaps=keep_accumulator_memmaps,
+        stitcher_device=stitcher_device,
     )
     logger.info(f"[STITCHER] Canvas allocated at {paths.probability_memmap}")
 
@@ -273,6 +285,7 @@ def process_scene(
                 blend_window,
                 min_weight,
                 keep_accumulator_memmaps,
+                stitcher_device,
             )
             logger.info("[TTA] Individual inverse-transformed probability GeoTIFF export enabled.")
     else:

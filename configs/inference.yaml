@@ -91,6 +91,15 @@ inference:
     # normalized probability memmap is written. Set true only for debugging.
     keep_accumulator_memmaps: false
 
+    # Opt-in performance: accumulate the stitching canvases on the inference
+    # device (GPU tensors) instead of CPU memmaps. Removes the per-batch
+    # GPU->CPU sync that dominates weighted_blend wall time at dense strides;
+    # one device->host copy happens at scene close instead. Costs
+    # 2 x H x W x 4 bytes VRAM per open stitcher (sum + weight canvases).
+    # Outputs are byte-identical to the CPU path (elementwise IEEE fp32 math;
+    # parity-checked by scripts/tests/test_stitcher_device_parity.py).
+    accumulate_on_device: false
+
   # --- Test-Time Augmentation ---
   tta:
     # Disabled by default because it multiplies inference cost by the number of

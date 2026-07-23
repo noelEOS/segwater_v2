@@ -17,6 +17,10 @@ def _resolve_dtype(precision: str) -> np.dtype:
     raise ValueError(f"Unsupported precision: {precision}. Must be 'float32' or 'float16'.")
 
 
+def _torch_dtype(np_dtype: np.dtype) -> torch.dtype:
+    return torch.float16 if np_dtype == np.float16 else torch.float32
+
+
 def _make_1d_blend_weights(length: int, window: str, min_weight: float) -> np.ndarray:
     """Create one-dimensional nonzero blend weights.
 
@@ -86,6 +90,7 @@ class ProbabilityStitcher:
         blend_window: str = "hann",
         min_weight: float = 1e-3,
         keep_accumulator_memmaps: bool = False,
+        device: str | None = None,
     ):
         """
         Args:
@@ -101,6 +106,13 @@ class ProbabilityStitcher:
                 accumulator memmaps after the normalized final probability
                 memmap is written. The default false removes these temporary
                 working files at close time.
+            device: If set (e.g. "cuda"), accumulate canvases as torch tensors
+                on that device instead of CPU memmaps. add_batch then consumes
+                the probability tensor without a device->host copy, so the
+                per-batch GPU sync disappears; a single device->host copy
+                happens at close time. Elementwise fp32 mul/add/div and the
+                fp32->fp16 store cast are IEEE-identical on CPU and CUDA, so
+                outputs byte-match the default None (CPU memmap) path.
         """
         self.output_path = output_path
         self.shape = shape
@@ -109,7 +121,12 @@ class ProbabilityStitcher:
         self.blend_window = blend_window
         self.min_weight = float(min_weight)
         self.keep_accumulator_memmaps = bool(keep_accumulator_memmaps)
+        self.device = device
         self._weight_cache: dict[tuple[int, int], np.ndarray] = {}
+        self._device_weight_cache: dict[tuple[int, int], torch.Tensor] = {}
+        self._device_canvas: torch.Tensor | None = None
+        self._device_sum: torch.Tensor | None = None
+        self._device_weight: torch.Tensor | None = None
 
         if self.mode not in {"crop_only", "weighted_blend"}:
             raise ValueError(
@@ -137,28 +154,37 @@ class ProbabilityStitcher:
         if self.mode == "weighted_blend":
             self.sum_path = f"{self.output_path}.sum.float32.memmap"
             self.weight_path = f"{self.output_path}.weight.float32.memmap"
-            self.sum_memmap = np.memmap(
-                self.sum_path,
-                dtype=np.float32,
-                mode="w+",
-                shape=self.shape,
+            if self.device is None:
+                self.sum_memmap = np.memmap(
+                    self.sum_path,
+                    dtype=np.float32,
+                    mode="w+",
+                    shape=self.shape,
+                )
+                self.weight_memmap = np.memmap(
+                    self.weight_path,
+                    dtype=np.float32,
+                    mode="w+",
+                    shape=self.shape,
+                )
+                self.sum_memmap[:] = 0.0
+                self.weight_memmap[:] = 0.0
+            else:
+                self._device_sum = torch.zeros(self.shape, dtype=torch.float32, device=self.device)
+                self._device_weight = torch.zeros(self.shape, dtype=torch.float32, device=self.device)
+        elif self.device is not None:
+            self._device_canvas = torch.zeros(
+                self.shape, dtype=_torch_dtype(self.dtype), device=self.device
             )
-            self.weight_memmap = np.memmap(
-                self.weight_path,
-                dtype=np.float32,
-                mode="w+",
-                shape=self.shape,
-            )
-            self.sum_memmap[:] = 0.0
-            self.weight_memmap[:] = 0.0
 
         logger.info(
-            "Initialized Global Probability Canvas: shape=%s | dtype=%s | mode=%s | blend_window=%s | keep_accumulator_memmaps=%s",
+            "Initialized Global Probability Canvas: shape=%s | dtype=%s | mode=%s | blend_window=%s | keep_accumulator_memmaps=%s | device=%s",
             self.shape,
             self.dtype,
             self.mode,
             self.blend_window,
             self.keep_accumulator_memmaps,
+            self.device or "cpu-memmap",
         )
 
     @staticmethod
@@ -177,6 +203,15 @@ class ProbabilityStitcher:
             )
         return self._weight_cache[key]
 
+    def _get_weights_device(self, height: int, width: int) -> torch.Tensor:
+        key = (height, width)
+        if key not in self._device_weight_cache:
+            # Reuse the numpy weight map bit-for-bit; only the storage moves.
+            self._device_weight_cache[key] = torch.from_numpy(
+                self._get_weights(height, width)
+            ).to(self.device)
+        return self._device_weight_cache[key]
+
     def add_batch(self, batch_probs: torch.Tensor, metadata: Dict[str, torch.Tensor]):
         """
         Crop buffered predictions and add valid regions to the global canvas.
@@ -186,6 +221,10 @@ class ProbabilityStitcher:
                 probabilities after sigmoid or softmax selection.
             metadata: Batched spatial coordinates from InferenceDataset.
         """
+        if self.device is not None:
+            self._add_batch_device(batch_probs, metadata)
+            return
+
         batch_probs_np = batch_probs.detach().cpu().numpy()
         batch_size = batch_probs_np.shape[0]
 
@@ -211,7 +250,43 @@ class ProbabilityStitcher:
                 self.sum_memmap[y0:y0 + h, x0:x0 + w] += crop_prob.astype(np.float32) * weights
                 self.weight_memmap[y0:y0 + h, x0:x0 + w] += weights
 
+    def _add_batch_device(self, batch_probs: torch.Tensor, metadata: Dict[str, torch.Tensor]):
+        """On-device add_batch: no host transfer, all ops async on the stream.
+
+        Tiles accumulate in the same order as the numpy path and every op
+        (upcast, mul, add, store cast) is elementwise IEEE arithmetic, so the
+        finalized canvas byte-matches the CPU memmap path.
+        """
+        batch = batch_probs.detach().to(self.device, non_blocking=True)
+        batch_size = batch.shape[0]
+
+        for i in range(batch_size):
+            y0 = self._metadata_item(metadata, "valid_y0", i)
+            x0 = self._metadata_item(metadata, "valid_x0", i)
+            h = self._metadata_item(metadata, "valid_h", i)
+            w = self._metadata_item(metadata, "valid_w", i)
+            buffer = self._metadata_item(metadata, "buffer_size", i)
+
+            crop_prob = batch[i, buffer:buffer + h, buffer:buffer + w]
+
+            if crop_prob.shape != (h, w):
+                raise ValueError(
+                    f"Cropped probability shape {tuple(crop_prob.shape)} does not match "
+                    f"metadata valid size {(h, w)}. Check tile_size/buffer/model output shape."
+                )
+
+            if self.mode == "crop_only":
+                self._device_canvas[y0:y0 + h, x0:x0 + w] = crop_prob.to(self._device_canvas.dtype)
+            else:
+                weights = self._get_weights_device(h, w)
+                self._device_sum[y0:y0 + h, x0:x0 + w] += crop_prob.to(torch.float32) * weights
+                self._device_weight[y0:y0 + h, x0:x0 + w] += weights
+
     def _finalize_weighted_blend(self):
+        if self.device is not None:
+            self._finalize_weighted_blend_device()
+            return
+
         zero_weight_pixels = int(np.count_nonzero(self.weight_memmap == 0))
         if zero_weight_pixels > 0:
             raise RuntimeError(
@@ -223,6 +298,29 @@ class ProbabilityStitcher:
         self.memmap[:] = normalized.astype(self.dtype)
         self.sum_memmap.flush()
         self.weight_memmap.flush()
+
+    def _finalize_weighted_blend_device(self):
+        zero_weight_pixels = int((self._device_weight == 0).sum().item())
+        if zero_weight_pixels > 0:
+            raise RuntimeError(
+                f"Weighted blend left {zero_weight_pixels} pixels without coverage. "
+                "Check stride, tile_size, and edge_policy."
+            )
+
+        normalized = self._device_sum / self._device_weight
+        self.memmap[:] = normalized.to(_torch_dtype(self.dtype)).cpu().numpy()
+
+        if self.keep_accumulator_memmaps:
+            self.sum_memmap = np.memmap(
+                self.sum_path, dtype=np.float32, mode="w+", shape=self.shape
+            )
+            self.weight_memmap = np.memmap(
+                self.weight_path, dtype=np.float32, mode="w+", shape=self.shape
+            )
+            self.sum_memmap[:] = self._device_sum.cpu().numpy()
+            self.weight_memmap[:] = self._device_weight.cpu().numpy()
+            self.sum_memmap.flush()
+            self.weight_memmap.flush()
 
     @staticmethod
     def _delete_file_if_present(path: str | None) -> None:
@@ -245,6 +343,8 @@ class ProbabilityStitcher:
         """Flush final probability data to disk and close file handles."""
         if self.mode == "weighted_blend":
             self._finalize_weighted_blend()
+        elif self._device_canvas is not None:
+            self.memmap[:] = self._device_canvas.cpu().numpy()
 
         self.memmap.flush()
         del self.memmap
@@ -253,6 +353,13 @@ class ProbabilityStitcher:
             del self.sum_memmap
         if self.weight_memmap is not None:
             del self.weight_memmap
+
+        # Release device canvases back to the CUDA caching allocator so the
+        # next scene's stitcher can reuse the blocks.
+        self._device_canvas = None
+        self._device_sum = None
+        self._device_weight = None
+        self._device_weight_cache.clear()
 
         if self.mode == "weighted_blend":
             self._cleanup_accumulator_memmaps()

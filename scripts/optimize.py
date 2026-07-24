@@ -1,7 +1,10 @@
+import math
 import os
+import random
 import optuna
 import hydra
 from omegaconf import DictConfig, OmegaConf
+import numpy as np
 import torch
 import wandb
 
@@ -9,8 +12,9 @@ from src.data.datamodule import CoastalDataModule
 from src.models.factory import SegmentationModelFactory
 from src.models.losses import CoastalCompositeLoss
 from src.engine.trainer import SpectralTrainer
+from src.utils.stratified_metrics import StratifiedWaterAccumulator
 from src.utils.perf import apply_perf_flags, build_adamw, maybe_compile
-from dotenv import load_dotenv 
+from dotenv import load_dotenv
 import logging
 from optuna.storages import RDBStorage
 
@@ -19,6 +23,18 @@ logger = logging.getLogger(__name__)
 load_dotenv()
 
 def objective(trial: optuna.Trial, cfg: DictConfig):
+    # SAME fixed seed for every trial (cfg.seed=42) so trials differ only by the
+    # sampled hyperparameters, not by uncontrolled init / shuffle noise. We seed
+    # random/numpy/torch/cuda but deliberately do NOT enable cudnn.deterministic
+    # / use_deterministic_algorithms: the requirement is reproducible seeding,
+    # not bitwise determinism, and forcing deterministic cuDNN kernels carries a
+    # real throughput cost across a long sweep.
+    seed = int(cfg.seed)
+    random.seed(seed)
+    np.random.seed(seed)
+    torch.manual_seed(seed)
+    torch.cuda.manual_seed_all(seed)
+
     # Suggest hyperparameters
     #arch = trial.suggest_categorical("arch", ["unet", "upernet", "segformer"])
     base_lr = trial.suggest_float("base_learning_rate", 1e-5, 1e-2, log=True)
@@ -68,9 +84,10 @@ def objective(trial: optuna.Trial, cfg: DictConfig):
         persistent_workers=cfg.data.get("persistent_workers", True),
         augment=cfg.data.augment,
         aug_params=cfg.data.get("aug", {}),
+        seed=cfg.seed,
     )
     datamodule.setup()
-    
+
     _encoder_kwargs = cfg.model.get("encoder_kwargs", None)
     _encoder_kwargs = OmegaConf.to_container(_encoder_kwargs, resolve=True) if _encoder_kwargs else {}
     model = SegmentationModelFactory.build(
@@ -132,7 +149,31 @@ def objective(trial: optuna.Trial, cfg: DictConfig):
     scheduler = torch.optim.lr_scheduler.SequentialLR(
         optimizer, schedulers=[scheduler_warmup, scheduler_decay], milestones=[max(1, warmup_steps)]
     )
-    
+
+    # --- Optional stratified / pair-macro objective ---
+    # When data.strata_index_path points at hpo_val_pair_strata.npz, the trainer
+    # accumulates pair-macro water IoU on mixed chips (the ladder's re-ranking
+    # metric) and the objective becomes that instead of pooled val mIoU. The
+    # N-assert fails fast if the strata index and the val memmap disagree.
+    strata_acc = None
+    strata_path = cfg.data.get("strata_index_path", None)
+    if strata_path:
+        idx = np.load(strata_path, allow_pickle=True)
+        assert int(idx["N"]) == len(datamodule.val_ds), (
+            f"strata index N={int(idx['N'])} != val_ds len {len(datamodule.val_ds)} "
+            f"(wrong memmap for {strata_path}?)"
+        )
+        strata_acc = StratifiedWaterAccumulator(
+            stratum_id=idx["stratum_id"].astype(np.int64),
+            pair_id=idx["pair_id"].astype(np.int64),
+            eligible=idx["eligible"].astype(bool),
+            device=device,
+        )
+        logger.info(
+            f"Stratified objective ENABLED: N={int(idx['N'])} pairs={len(idx['pair_names'])} "
+            f"eligible={int(idx['eligible'].sum())} (min_mixed={int(idx['min_mixed'])})"
+        )
+
     trainer = SpectralTrainer(
         model=model,
         optimizer=optimizer,
@@ -145,19 +186,37 @@ def objective(trial: optuna.Trial, cfg: DictConfig):
         num_classes=cfg.model.num_classes,
         accumulate_grad_batches=cfg.trainer.get("accumulate_grad_batches", 1),
         log_every_n_steps=cfg.trainer.get("log_every_n_steps", 1),
+        strata_accumulator=strata_acc,
     )
-    
-    best_iou,_ = trainer.fit(
+
+    best_iou, _, final_metrics = trainer.fit(
         train_dataloader=train_dl,
         val_dataloader=val_dl,
         max_steps=max_steps,
         val_check_interval=val_check_interval,
         trial=trial
     )
-            
+
+    if strata_acc is not None:
+        # Objective = FINAL val check's pair-macro water IoU (non-finite -> 0.0,
+        # matching the trainer's guard). Guardrails + pooled diagnostic recorded
+        # as user_attrs for post-hoc inspection, NOT folded into the objective.
+        objective_value = final_metrics.get("strat/pair_macro_water_iou", float("nan"))
+        if not math.isfinite(objective_value):
+            objective_value = 0.0
+        trial.set_user_attr("pair_macro_water_iou", objective_value)
+        trial.set_user_attr("n_pairs_used", final_metrics.get("strat/n_pairs_used", float("nan")))
+        trial.set_user_attr("pure_land_fpr", final_metrics.get("strat/pure_land_fpr", float("nan")))
+        trial.set_user_attr("pure_water_fnr", final_metrics.get("strat/pure_water_fnr", float("nan")))
+        trial.set_user_attr("mixed_precision", final_metrics.get("strat/mixed_precision", float("nan")))
+        trial.set_user_attr("mixed_recall", final_metrics.get("strat/mixed_recall", float("nan")))
+        trial.set_user_attr("pooled_best_miou", best_iou)
+    else:
+        objective_value = best_iou
+
     datamodule.teardown()
     run.finish()
-    return best_iou
+    return objective_value
 
 @hydra.main(version_base="1.3", config_path="../configs", config_name="config")
 def main(cfg: DictConfig):
@@ -182,7 +241,8 @@ def main(cfg: DictConfig):
             }
         )
     else:
-        storage = f"sqlite:///{cfg.output_dir}/optuna_sweep.db"
+        db_path = f"sqlite:///{cfg.output_dir}/optuna_sweep.db"
+        storage = db_path
         print(f"No remote DB found. Falling back to local SQLite: {db_path}")
     
     # min_resource is in global steps; default 800 = the shipped HPO protocol.

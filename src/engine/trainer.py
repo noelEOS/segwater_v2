@@ -31,6 +31,7 @@ class SpectralTrainer:
         seed: int = 42,
         accumulate_grad_batches: int = 1,
         log_every_n_steps: int = 1,
+        strata_accumulator=None,
     ):
         self.model = model.to(device)
         self.arch = arch
@@ -44,6 +45,9 @@ class SpectralTrainer:
         self.gradient_clip_val = gradient_clip_val
         self.accumulate_grad_batches = max(1, int(accumulate_grad_batches))
         self.log_every_n_steps = max(1, int(log_every_n_steps))
+        # Opt-in stratified/pair-macro accumulator (HPO objective). None keeps
+        # the train.py path byte-identical: no extra val work, pooled-mIoU return.
+        self.strata_acc = strata_accumulator
 
         # Resolve the torch dtype
         self.amp_dtype = torch.bfloat16 if precision == "bf16" else torch.float16
@@ -100,6 +104,9 @@ class SpectralTrainer:
             val_miou = float("nan")  # defined even if the loop body never runs
             top_k_checkpoints = [] # List to track (val_miou, ckpt_path)
             best_val_miou = 0.0
+            # Full metrics dict of the LAST val check; the caller reads the
+            # stratified objective from it (empty until the first val runs).
+            final_val_metrics_dict = {}
 
             train_iterator = iter(train_dataloader)
             
@@ -194,6 +201,22 @@ class SpectralTrainer:
                     logger.warning(f"Non-finite val mIoU ({val_miou}) at step {global_step}; treating as 0.0")
                     val_miou = 0.0
 
+                final_val_metrics_dict = val_metrics_dict
+
+                # The objective / pruner signal is the pair-macro water IoU when a
+                # strata accumulator is wired (HPO), else pooled val mIoU (train.py
+                # path unchanged). Same non-finite -> 0.0 guard as val_miou above,
+                # so an early all-NaN pair-macro ranks last / prunes cleanly.
+                if self.strata_acc is not None:
+                    objective_metric = val_metrics_dict.get("strat/pair_macro_water_iou", float("nan"))
+                    if not math.isfinite(objective_metric):
+                        logger.warning(
+                            f"Non-finite pair-macro water IoU ({objective_metric}) at step "
+                            f"{global_step}; treating as 0.0")
+                        objective_metric = 0.0
+                else:
+                    objective_metric = val_miou
+
                 n_vals += 1
                 best_val_miou = max(best_val_miou, val_miou)
                 
@@ -257,9 +280,10 @@ class SpectralTrainer:
 
                 if trial is not None:
                     #import optuna
-                    trial.report(val_miou, step=global_step)
+                    trial.report(objective_metric, step=global_step)
                     if trial.should_prune():
-                        raise optuna.TrialPruned(f"Pruned at step {global_step} with mIoU {val_miou:.4f}")
+                        raise optuna.TrialPruned(
+                            f"Pruned at step {global_step} with objective {objective_metric:.4f}")
                         
             # Optionally persist the FINAL-step weights alongside the top-k.
             # Rationale: with an honest (pair-pure) val, generalization peaks
@@ -286,34 +310,49 @@ class SpectralTrainer:
                 if os.path.lexists(link_path):
                     os.remove(link_path)
                 os.symlink(os.path.basename(best_ckpt_path), link_path)
-            return best_val_miou, best_ckpt_path
+            # 3-tuple: slot 0 keeps train.py's pooled-mIoU semantics; slot 2 is
+            # the last val check's full metrics dict (carries strat/* under HPO).
+            return best_val_miou, best_ckpt_path, final_val_metrics_dict
 
     @torch.no_grad()
     def val_epoch(self, dataloader) -> Dict[str, Any]:
         self.model.eval()
         self.val_metrics.reset()
-        
+        if self.strata_acc is not None:
+            self.strata_acc.reset()
+
         total_loss = torch.zeros((), device=self.device)
         num_batches = 0
-        
+
         for batch in tqdm(dataloader, desc="Validating", leave=False):
             x = batch["pixel_values"].to(self.device, non_blocking=True)
             y = batch["labels"].to(self.device, non_blocking=True)
-            
+
             with torch.autocast(device_type=self.device.type, enabled=self.use_amp):
                 logits = self.model(x)
                 loss_dict = self.loss_fn(logits, y)
                 loss = loss_dict["loss"]
-                
+
             preds = torch.argmax(logits, dim=1)
             self.val_metrics.update(preds, y)
-            
+            if self.strata_acc is not None:
+                # Accumulate on fp32-softmax water prob (ladder convention); relies
+                # on the val loader running shuffle=False in strata/memmap order.
+                self.strata_acc.update(logits, y)
+
             total_loss += loss.detach()
             num_batches += 1
-            
+
         metrics_dict = self.val_metrics.compute()
         metrics_dict["loss"] = (total_loss / max(1, num_batches)).item()
-        
+
+        if self.strata_acc is not None:
+            assert self.strata_acc.base == self.strata_acc.N, (
+                f"strata accumulator saw {self.strata_acc.base} chips != {self.strata_acc.N}"
+            )
+            for k, v in self.strata_acc.compute().items():
+                metrics_dict[f"strat/{k}"] = v
+
         return metrics_dict
         
     @torch.no_grad()

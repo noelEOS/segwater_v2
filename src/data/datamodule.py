@@ -1,10 +1,27 @@
 import gc
 import os
+import random
 from typing import Optional
+
+import numpy as np
+import torch
 from torch.utils.data import DataLoader
 
 from src.data.dataset import CoastalMemmapDataset, MemmapSpec
 from src.data.transforms import CoastalAug
+
+
+def _seed_worker(worker_id: int):
+    """Make each DataLoader worker's RNG deterministic given the base generator.
+
+    torch seeds each worker's `torch.initial_seed()` from the loader generator +
+    worker id; we derive numpy/random from it so any numpy/random-based transform
+    is reproducible across runs with the same base seed.
+    """
+    ws = torch.initial_seed() % 2 ** 32
+    np.random.seed(ws)
+    random.seed(ws)
+
 
 class CoastalDataModule:
     """Pure Python DataModule orchestrating Memmap datasets."""
@@ -24,6 +41,7 @@ class CoastalDataModule:
         persistent_workers: bool = True,
         augment: bool = True,
         aug_params: Optional[dict] = None,
+        seed: Optional[int] = None,
     ):
         self.root_dir = root_dir
         self.train_path = os.path.join(root_dir, train_file)
@@ -37,6 +55,9 @@ class CoastalDataModule:
         self.pin_memory = pin_memory
         self.persistent_workers = persistent_workers and (num_workers > 0)
         self.augment = augment
+        # Seed for the TRAIN loader's shuffle generator + worker RNGs. None keeps
+        # loader construction identical to the pre-seeding behaviour (train.py).
+        self.seed = seed
         # Per-aug probabilities forwarded to CoastalAug when augment is enabled.
         # None -> {} -> CoastalAug's own signature defaults.
         self.aug_params = aug_params or {}
@@ -71,6 +92,14 @@ class CoastalDataModule:
         )
         if self.num_workers > 0:
             kwargs["prefetch_factor"] = 2
+
+        # Seed only the shuffling (train) loader: a fixed generator makes the
+        # shuffle order reproducible and worker_init_fn pins per-worker RNGs.
+        # val/test are shuffle=False, so they are untouched. seed=None keeps
+        # construction byte-identical to the pre-seeding behaviour.
+        if shuffle and self.seed is not None:
+            kwargs["generator"] = torch.Generator().manual_seed(self.seed)
+            kwargs["worker_init_fn"] = _seed_worker
 
         loader = DataLoader(dataset, **kwargs)
         self._loaders.append(loader)

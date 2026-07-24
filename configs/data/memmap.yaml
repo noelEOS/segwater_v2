@@ -6,6 +6,10 @@ val_batch_size: 256
 num_workers: 8
 pin_memory: true
 persistent_workers: true
+# Set to data/hpo_strata/hpo_val_pair_strata.npz to switch the HPO objective to
+# pair-macro water IoU on mixed chips (the checkpoint-ladder re-ranking metric).
+# null keeps the pooled val-mIoU objective (also the train.py path is unaffected).
+strata_index_path: null
 augment: false
 # Per-aug probabilities forwarded to CoastalAug when augment: true.
 # These defaults match CoastalAug's signature, so flipping augment to true

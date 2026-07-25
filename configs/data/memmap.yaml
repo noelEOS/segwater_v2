@@ -6,9 +6,14 @@ val_batch_size: 256
 num_workers: 8
 pin_memory: true
 persistent_workers: true
-# Set to data/hpo_strata/hpo_val_pair_strata.npz to switch the HPO objective to
-# pair-macro water IoU on mixed chips (the checkpoint-ladder re-ranking metric).
-# null keeps the pooled val-mIoU objective (also the train.py path is unaffected).
+# Enables pair-macro water IoU on mixed chips (the checkpoint-ladder re-ranking
+# metric) during validation. HPO (optimize.py) uses the subset npz
+# data/hpo_strata/hpo_val_pair_strata.npz (baked eligible mask, >=5-mixed gate)
+# and makes it the objective; stage2 (train.py) uses the full-val ladder npz
+# experiments/CHECKPOINT_LADDER/strata_index.npz (no eligible key -> derived as
+# pair_mixed_count >= 20) as added val/strat/* metrics only (selection stays
+# pooled-mIoU). null keeps the pooled val-mIoU objective and leaves the val path
+# byte-identical.
 strata_index_path: null
 augment: false
 # Per-aug probabilities forwarded to CoastalAug when augment: true.

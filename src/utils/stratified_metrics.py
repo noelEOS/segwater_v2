@@ -67,6 +67,45 @@ class StratifiedWaterAccumulator:
         self.pair_cm = torch.zeros((self.P, 4), dtype=torch.int64, device=device)
         self.base = 0
 
+    @classmethod
+    def from_npz(cls, path, device, expected_n=None, default_min_mixed: int = 20):
+        """Build an accumulator from a strata-index npz (HPO subset or ladder).
+
+        Handles both npz variants written across this project:
+        - HPO subset npz (`data/hpo_strata/hpo_val_pair_strata.npz`) stores an
+          `eligible` bool mask (and `min_mixed`) baked at build time -> used
+          verbatim.
+        - Ladder npz (`experiments/CHECKPOINT_LADDER/strata_index.npz`) has no
+          `eligible`/`min_mixed` keys -> eligibility is derived as
+          `pair_mixed_count >= min_mixed`, where `min_mixed` is `npz["min_mixed"]`
+          if stored else `default_min_mixed` (20, ladder-consistent).
+
+        When `expected_n` is not None, raise ValueError unless the index length
+        matches (using `npz["N"]` when present, else `len(stratum_id)`). Same
+        fail-fast role as the N-assert the HPO objective used inline.
+        """
+        import numpy as np
+
+        idx = np.load(path, allow_pickle=True)
+        keys = set(idx.keys())
+
+        stratum_id = idx["stratum_id"].astype(np.int64)
+        pair_id = idx["pair_id"].astype(np.int64)
+
+        n = int(idx["N"]) if "N" in keys else len(stratum_id)
+        if expected_n is not None and n != expected_n:
+            raise ValueError(
+                f"strata index N={n} != expected_n {expected_n} (wrong memmap for {path}?)"
+            )
+
+        if "eligible" in keys:
+            eligible = idx["eligible"].astype(bool)
+        else:
+            min_mixed = int(idx["min_mixed"]) if "min_mixed" in keys else int(default_min_mixed)
+            eligible = (idx["pair_mixed_count"] >= min_mixed).astype(bool)
+
+        return cls(stratum_id=stratum_id, pair_id=pair_id, eligible=eligible, device=device)
+
     def reset(self):
         self.strat_cm.zero_()
         self.pair_cm.zero_()

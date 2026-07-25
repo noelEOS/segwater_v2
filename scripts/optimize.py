@@ -158,20 +158,12 @@ def objective(trial: optuna.Trial, cfg: DictConfig):
     strata_acc = None
     strata_path = cfg.data.get("strata_index_path", None)
     if strata_path:
-        idx = np.load(strata_path, allow_pickle=True)
-        assert int(idx["N"]) == len(datamodule.val_ds), (
-            f"strata index N={int(idx['N'])} != val_ds len {len(datamodule.val_ds)} "
-            f"(wrong memmap for {strata_path}?)"
-        )
-        strata_acc = StratifiedWaterAccumulator(
-            stratum_id=idx["stratum_id"].astype(np.int64),
-            pair_id=idx["pair_id"].astype(np.int64),
-            eligible=idx["eligible"].astype(bool),
-            device=device,
+        strata_acc = StratifiedWaterAccumulator.from_npz(
+            strata_path, device, expected_n=len(datamodule.val_ds)
         )
         logger.info(
-            f"Stratified objective ENABLED: N={int(idx['N'])} pairs={len(idx['pair_names'])} "
-            f"eligible={int(idx['eligible'].sum())} (min_mixed={int(idx['min_mixed'])})"
+            f"Stratified objective ENABLED: N={strata_acc.N} pairs={strata_acc.P} "
+            f"eligible={int(strata_acc.eligible.sum())}"
         )
 
     trainer = SpectralTrainer(

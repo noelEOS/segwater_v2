@@ -9,6 +9,7 @@ from src.models.factory import SegmentationModelFactory
 from src.models.losses import CoastalCompositeLoss
 from src.engine.trainer import SpectralTrainer
 from src.utils.perf import apply_perf_flags, build_adamw, maybe_compile, unwrap_compiled
+from src.utils.stratified_metrics import StratifiedWaterAccumulator
 
 @hydra.main(version_base="1.3", config_path="../configs", config_name="config")
 def main(cfg: DictConfig):
@@ -68,7 +69,23 @@ def main(cfg: DictConfig):
 
     train_dl = datamodule.train_dataloader()
     val_dl = datamodule.val_dataloader()
-    
+
+    # Optional live pair-macro water IoU + guardrails during val (val/strat/*).
+    # When data.strata_index_path is set (stage2 -> the full-val ladder npz), the
+    # trainer accumulates the ladder's re-ranking metric each val check. This adds
+    # visibility only; checkpoint selection stays pooled-mIoU-driven. Default
+    # (null) leaves the val path byte-identical.
+    strata_acc = None
+    strata_path = cfg.data.get("strata_index_path", None)
+    if strata_path:
+        strata_acc = StratifiedWaterAccumulator.from_npz(
+            strata_path, device, expected_n=len(datamodule.val_ds)
+        )
+        print(
+            f"Stratified val metrics ENABLED: N={strata_acc.N} pairs={strata_acc.P} "
+            f"eligible={int(strata_acc.eligible.sum())}"
+        )
+
     # Stage 2 Budgeting (MLOps Config-Driven)
     steps_per_epoch = len(train_dl)
     
@@ -104,8 +121,9 @@ def main(cfg: DictConfig):
         seed=cfg.seed,
         accumulate_grad_batches=cfg.trainer.get("accumulate_grad_batches", 1),
         log_every_n_steps=cfg.trainer.get("log_every_n_steps", 1),
+        strata_accumulator=strata_acc,
     )
-    
+
     os.makedirs(cfg.output_dir, exist_ok=True)
     
     # 1. Train and save top 3 checkpoints. Receive the path to the best one.

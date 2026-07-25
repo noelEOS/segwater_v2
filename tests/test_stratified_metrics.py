@@ -136,6 +136,103 @@ def test_reset_zeros_state():
     assert acc.strat_cm.sum().item() == 0
 
 
+def test_from_npz_uses_stored_eligible_mask(tmp_path):
+    """HPO subset npz stores `eligible` (+ min_mixed) -> used verbatim."""
+    npz = tmp_path / "hpo.npz"
+    eligible = np.array([True, True, False], dtype=bool)
+    np.savez(
+        npz,
+        stratum_id=STRATUM_ID,
+        pair_id=PAIR_ID,
+        eligible=eligible,
+        min_mixed=np.int64(5),
+        N=np.int64(N),
+        # include a pair_mixed_count that would give a DIFFERENT mask if derived,
+        # to prove the stored mask wins.
+        pair_mixed_count=np.array([100, 0, 100], dtype=np.int64),
+    )
+    acc = StratifiedWaterAccumulator.from_npz(str(npz), torch.device("cpu"))
+    np.testing.assert_array_equal(acc.eligible.cpu().numpy(), eligible)
+    assert acc.N == N
+    assert acc.P == len(eligible)
+
+
+def test_from_npz_derives_eligible_from_mixed_count(tmp_path):
+    """Ladder-style npz (no eligible/min_mixed) -> derived as count >= 20."""
+    npz = tmp_path / "ladder.npz"
+    pair_mixed_count = np.array([25, 19, 20], dtype=np.int64)  # >=20 -> [T, F, T]
+    np.savez(
+        npz,
+        stratum_id=STRATUM_ID,
+        pair_id=PAIR_ID,
+        pair_mixed_count=pair_mixed_count,
+        N=np.int64(N),
+    )
+    acc = StratifiedWaterAccumulator.from_npz(str(npz), torch.device("cpu"))
+    np.testing.assert_array_equal(
+        acc.eligible.cpu().numpy(), np.array([True, False, True])
+    )
+    # default_min_mixed override changes the derived gate.
+    acc10 = StratifiedWaterAccumulator.from_npz(
+        str(npz), torch.device("cpu"), default_min_mixed=10
+    )
+    np.testing.assert_array_equal(
+        acc10.eligible.cpu().numpy(), np.array([True, True, True])
+    )
+
+
+def test_from_npz_expected_n_mismatch_raises(tmp_path):
+    npz = tmp_path / "ladder.npz"
+    np.savez(
+        npz,
+        stratum_id=STRATUM_ID,
+        pair_id=PAIR_ID,
+        pair_mixed_count=np.array([25, 25, 25], dtype=np.int64),
+        N=np.int64(N),
+    )
+    # matching expected_n is fine
+    StratifiedWaterAccumulator.from_npz(str(npz), torch.device("cpu"), expected_n=N)
+    # mismatch raises
+    import pytest
+
+    with pytest.raises(ValueError):
+        StratifiedWaterAccumulator.from_npz(
+            str(npz), torch.device("cpu"), expected_n=N + 1
+        )
+
+
+def test_from_npz_compute_matches_direct(tmp_path):
+    """Accumulator loaded from npz gives identical compute() to a direct build."""
+    logits, y = _build_data()
+    npz = tmp_path / "hpo.npz"
+    np.savez(
+        npz,
+        stratum_id=STRATUM_ID,
+        pair_id=PAIR_ID,
+        eligible=ELIGIBLE,
+        min_mixed=np.int64(1),
+        N=np.int64(N),
+    )
+    acc_npz = StratifiedWaterAccumulator.from_npz(str(npz), torch.device("cpu"))
+    acc_direct = StratifiedWaterAccumulator(
+        stratum_id=STRATUM_ID, pair_id=PAIR_ID, eligible=ELIGIBLE,
+        device=torch.device("cpu"), tau=TAU, ignore_index=IGNORE,
+    )
+    for acc in (acc_npz, acc_direct):
+        acc.update(logits[:5], y[:5])
+        acc.update(logits[5:], y[5:])
+
+    out_npz = acc_npz.compute()
+    out_direct = acc_direct.compute()
+    assert out_npz.keys() == out_direct.keys()
+    for k in out_direct:
+        a, b = out_npz[k], out_direct[k]
+        if isinstance(b, float) and np.isnan(b):
+            assert np.isnan(a)
+        else:
+            assert np.isclose(a, b, atol=1e-9)
+
+
 def test_guardrails_match_reference():
     logits, y = _build_data()
     acc = StratifiedWaterAccumulator(

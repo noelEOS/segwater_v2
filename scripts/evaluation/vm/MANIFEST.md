@@ -108,7 +108,15 @@ Short version for an agent asked to do SDS on the VM:
    --site <SITE> --raster-dir <run dir> --out-dir ~/sds_vm_eval/<label>
    --thresholds 0.5 --segwater-root ~/segwater_v2`
    (`--segwater-root` is required — it imports Segwater's ShorelineVectorizer.)
+   For a real threshold sweep pass the comma list `0.1,…,0.9`; a single
+   `--thresholds 0.5` still prints a "Sweep summary" header with ONE row.
 4. Egress CSVs only.
+
+⚠️ Multi-run sweeps: `batch_sds_sweep_runs.sh` takes **every** subdir of the
+runs folder with no site filter (the shared VM runs dir mixes all sites), and
+its `find -type d` does not follow symlinks, so a staging dir of symlinks finds
+nothing. Loop `run_sds_from_rasters.py` over an explicit glob instead — pattern
+in the runbook.
 
 ⚠️ Site traps: TRUCVERT needs `--no-min-chainage-length` (else empty), DUCK
 needs `--keep-top-k 999` (else whole-run fail). Full detail, including the

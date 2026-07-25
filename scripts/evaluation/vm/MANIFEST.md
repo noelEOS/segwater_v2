@@ -13,11 +13,13 @@ Goal: an agent bringing up a VM to evaluate one site/model should only need to
 |---|---|
 | `score_pairbased_hampyeong.py` | ONE config-driven Hampyeong scorer, `--spec <yaml>`. Replaces the 3 hand-forked VM scorers. |
 | `specs/hampyeong_{swin,rest4,savelast}.yaml` | the three scoring targets as data. Proven byte-identical to the original forks (2026-07-25). |
+| `specs/hampyeong_gate.yaml` | 9-entry spec (3 seeds × best/last/SWA-5) for the 2026-07-25 checkpoint-selection gate. |
 | `score_hampyeong_legacy.py` | separate job: scores the 2 legacy Sen1Coast rasters + Table-2 repro check. |
 | `configs/demak/*.yaml` | `run_inference_sweep.py` configs (Demak, per seed). |
 | `configs/hampyeong/*.yaml` | Hampyeong inference sweep configs. ⚠️ see "Config caveats". |
 | `configs/aucroc/*.yaml` | Demak AUC-ROC + threshold-sweep eval configs (per variant/seed). |
 | `gen_rest4_configs.py` | generator that emitted the rest4 sweep configs. |
+| `gate/` | checkpoint-selection-gate config generators (Demak + Hampyeong, one per arm×seed) — see `gate/README.md`. |
 | `check_inputs.sh` | read-only readiness check; PASS/MISS per required input. |
 | `run_site_eval.sh` | 3-step entry point (check → infer-if-absent → score). |
 

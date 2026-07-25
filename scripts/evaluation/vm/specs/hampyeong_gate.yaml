@@ -1,0 +1,66 @@
+# Hampyeong gate — Swin-B three-seed checkpoint-selection comparison.
+# 9 entries = 3 seeds x {early_best, save_last, swa5}. variant_column keeps the
+# three arms distinguishable per seed. The scorer's distinctness + provenance
+# audit enforces that all 9 really are different checkpoints.
+repo: /home/noel/segwater_v2
+nas_root: /home/noel/ancillary/hampyeong/nas_root
+pair_root: outputs/inference
+expected_valid_pixels: 1179967
+variant_column: true
+output: /home/noel/hampyeong_gate_per_date_metrics.csv
+
+entries:
+  - label: Swin-B
+    slug: swin_b
+    seed: 19
+    variant: early_best
+    run_dir: "glob:runs/gate_best_hampyeong_s19_*_upernet_swin_base_224_best_native224_weighted_224_b0_s32"
+    checkpoint: outputs/stage2/upernet_tu-swin_base_patch4_window7_224/s19/upernet_tu-swin_base_patch4_window7_224_s19_step3600_miou0.923577.pth
+  - label: Swin-B
+    slug: swin_b
+    seed: 19
+    variant: save_last
+    run_dir: "glob:runs/gate_last_hampyeong_s19_*_upernet_swin_base_224_last_native224_weighted_224_b0_s32"
+    checkpoint: outputs/stage2/upernet_tu-swin_base_patch4_window7_224/s19/upernet_tu-swin_base_patch4_window7_224_s19_step40320_last.pth
+  - label: Swin-B
+    slug: swin_b
+    seed: 19
+    variant: swa5
+    run_dir: "glob:runs/gate_swa5_hampyeong_s19_*_upernet_swin_base_224_swa5_native224_weighted_224_b0_s32"
+    checkpoint: outputs/stage2/upernet_tu-swin_base_patch4_window7_224/s19/upernet_tu-swin_base_patch4_window7_224_s19_swa5_step36000-40320.pth
+  - label: Swin-B
+    slug: swin_b
+    seed: 42
+    variant: early_best
+    run_dir: "glob:runs/gate_best_hampyeong_s42_*_upernet_swin_base_224_best_native224_weighted_224_b0_s32"
+    checkpoint: outputs/stage2/upernet_tu-swin_base_patch4_window7_224/s42/upernet_tu-swin_base_patch4_window7_224_s42_step4800_miou0.925150.pth
+  - label: Swin-B
+    slug: swin_b
+    seed: 42
+    variant: save_last
+    run_dir: "glob:runs/gate_last_hampyeong_s42_*_upernet_swin_base_224_last_native224_weighted_224_b0_s32"
+    checkpoint: outputs/stage2/upernet_tu-swin_base_patch4_window7_224/s42/upernet_tu-swin_base_patch4_window7_224_s42_step40320_last.pth
+  - label: Swin-B
+    slug: swin_b
+    seed: 42
+    variant: swa5
+    run_dir: "glob:runs/gate_swa5_hampyeong_s42_*_upernet_swin_base_224_swa5_native224_weighted_224_b0_s32"
+    checkpoint: outputs/stage2/upernet_tu-swin_base_patch4_window7_224/s42/upernet_tu-swin_base_patch4_window7_224_s42_swa5_step36000-40320.pth
+  - label: Swin-B
+    slug: swin_b
+    seed: 58
+    variant: early_best
+    run_dir: "glob:runs/gate_best_hampyeong_s58_*_upernet_swin_base_224_best_native224_weighted_224_b0_s32"
+    checkpoint: outputs/stage2/upernet_tu-swin_base_patch4_window7_224/s58/upernet_tu-swin_base_patch4_window7_224_s58_step2400_miou0.923840.pth
+  - label: Swin-B
+    slug: swin_b
+    seed: 58
+    variant: save_last
+    run_dir: "glob:runs/gate_last_hampyeong_s58_*_upernet_swin_base_224_last_native224_weighted_224_b0_s32"
+    checkpoint: outputs/stage2/upernet_tu-swin_base_patch4_window7_224/s58/upernet_tu-swin_base_patch4_window7_224_s58_step40320_last.pth
+  - label: Swin-B
+    slug: swin_b
+    seed: 58
+    variant: swa5
+    run_dir: "glob:runs/gate_swa5_hampyeong_s58_*_upernet_swin_base_224_swa5_native224_weighted_224_b0_s32"
+    checkpoint: outputs/stage2/upernet_tu-swin_base_patch4_window7_224/s58/upernet_tu-swin_base_patch4_window7_224_s58_swa5_step36000-40320.pth

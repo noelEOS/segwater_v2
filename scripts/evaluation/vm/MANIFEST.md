@@ -85,3 +85,31 @@ silently mis-score.
 - The `configs/` rescue covered demak + hampyeong only. The VM also has
   `~/configs/{torreypines,trucvert,duck,namibia,…}` (SDS sites) not pulled here.
 - Specs default to a VM `output:` path; redirect it before running elsewhere.
+
+## SDS is a separate job — see `docs/RUNBOOK_sds_vm_eval.md`
+
+This kit covers **Demak + Hampyeong** only. SDS (satellite-derived shoreline:
+NARRABEEN / DUCK / TORREYPINES / TRUCVERT) runs from the `SDS_Benchmark_slim/`
+tree, which is intentionally **not** part of this kit — it is a 461 MB
+third-party benchmark with its own layout and vendored CoastSat, untracked in
+this repo. Do not copy it in here.
+
+Short version for an agent asked to do SDS on the VM:
+
+1. `rsync -az --exclude='__pycache__' SDS_Benchmark_slim/ gcp-vm:~/SDS_Benchmark_slim/`
+   (461 MB, ~15 s, ingress free). The tree is relocatable — `sds_core.py`
+   derives `REPO_ROOT` from its own path.
+2. Deps go in the **same** `torch211_cu128_inference` env (already done
+   2026-07-25; only needed on a fresh VM):
+   `pip install pytz PyQt5 bs4 wget astropy` **plus** conda-only
+   `gdal=3.12.3` pinned to the env's `libgdal-core`. No `eda_coastsat` env
+   is needed on the VM; `ee` is not needed.
+3. `cd ~/SDS_Benchmark_slim && python scripts/sds/run_sds_from_rasters.py
+   --site <SITE> --raster-dir <run dir> --out-dir ~/sds_vm_eval/<label>
+   --thresholds 0.5 --segwater-root ~/segwater_v2`
+   (`--segwater-root` is required — it imports Segwater's ShorelineVectorizer.)
+4. Egress CSVs only.
+
+⚠️ Site traps: TRUCVERT needs `--no-min-chainage-length` (else empty), DUCK
+needs `--keep-top-k 999` (else whole-run fail). Full detail, including the
+verified Narrabeen sanity numbers, is in the runbook.

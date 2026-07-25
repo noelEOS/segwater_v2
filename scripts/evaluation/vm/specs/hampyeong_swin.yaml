@@ -1,0 +1,18 @@
+# Swin-B (model of record) Hampyeong pair-based scoring × 3 seeds.
+# Replaces ~/score_pairbased_hampyeong_vm.py. The original hardcoded the exact
+# dev_sweep_all_* timestamps; run_dir below keeps that provenance but tolerates
+# re-inference via glob if the pinned dir is regenerated with a new timestamp.
+# To PIN a timestamp instead (stronger provenance), replace the glob: value with
+# the explicit relative dir, e.g.
+#   dev_sweep_all_hampyeong_s19_20260723T023359Z_upernet_swin_base_224_native224_weighted_224_b0_s32
+repo: /home/noel/segwater_v2
+nas_root: /home/noel/ancillary/hampyeong/nas_root
+pair_root: outputs/inference
+expected_valid_pixels: 1179967
+variant_column: false
+output: /home/noel/hampyeong_vm_per_date_metrics.csv
+
+entries:
+  - {label: Swin-B, slug: swin_b, seed: 19, run_dir: "glob:dev_sweep_all_hampyeong_s19_*_upernet_swin_base_224_native224_weighted_224_b0_s32", checkpoint: outputs/stage2/upernet_tu-swin_base_patch4_window7_224/s19/best.pth}
+  - {label: Swin-B, slug: swin_b, seed: 42, run_dir: "glob:dev_sweep_all_hampyeong_s42_*_upernet_swin_base_224_native224_weighted_224_b0_s32", checkpoint: outputs/stage2/upernet_tu-swin_base_patch4_window7_224/s42/best.pth}
+  - {label: Swin-B, slug: swin_b, seed: 58, run_dir: "glob:dev_sweep_all_hampyeong_s58_*_upernet_swin_base_224_native224_weighted_224_b0_s32", checkpoint: outputs/stage2/upernet_tu-swin_base_patch4_window7_224/s58/best.pth}

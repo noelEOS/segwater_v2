@@ -1,0 +1,42 @@
+# Pair-based Swin-B, seed s42, stride 32.
+# Mirrors configs/aucroc_semarang_s42_s32.yaml exactly; only the model_runs
+# run_dir (pair-based tree) and output.run_name differ.
+
+evaluation:
+  name: "semarang_probability_aucroc_s42_s32_pairbased"
+
+  reference_dir: "/home/noel/ancillary/demak_semarang/reference_s2"
+  reference_glob: "*.tif"
+  s1_id_regex: "(S1_\\d{8}_\\d{6}_\\d+_\\d+_\\d+)"
+
+  spatial_policy: "evaluate_geospatial_overlap"
+  resolution_atol: 1.0e-12
+
+  valid_mask_path: "/home/noel/ancillary/demak_semarang/valid_mask/GSHHG_GlobalSurfaceWater_combined_mask.tif"
+  valid_mask_value: 1
+
+  reference_water_values: [1]
+  reference_nodata_values: [255]
+
+  prediction:
+    type: "probability_map"
+    path_template: "{run_dir}/{s1_id}/{s1_id}_probability_water.tif"
+
+  threshold_sweep:
+    enabled: true
+    start: 0.0
+    stop: 1.0
+    step: 0.01
+    comparison: "greater_than"
+    optimize_metrics: ["iou", "f1", "mcc"]
+
+  model_runs:
+    Upernet_Swin_Base_224_native224_weighted:
+      run_dir: "/home/noel/segwater_v2/outputs/inference/dev_sweep_all_demak_s42_20260723T033452Z_upernet_swin_base_224_native224_weighted_224_b0_s32"
+
+  missing_prediction_policy: "record_and_continue"
+
+output:
+  root: "/home/noel/pairbased_vm_eval"
+  run_name: "semarang_probability_aucroc_s42_s32_pairbased"
+  add_timestamp: false

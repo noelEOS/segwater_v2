@@ -1,0 +1,27 @@
+# REST-4-arch Hampyeong pair-based scoring (unet, unet++, deeplab, dpt) × 3 seeds.
+# Replaces ~/score_pairbased_hampyeong_vm_rest4.py. Run dirs resolved by glob so
+# this survives re-inference (new timestamps); the resolved dir name is logged.
+repo: /home/noel/segwater_v2
+nas_root: /home/noel/ancillary/hampyeong/nas_root
+pair_root: outputs/inference
+expected_valid_pixels: 1179967
+variant_column: false
+output: /home/noel/hampyeong_vm_per_date_metrics_rest4.csv
+
+entries:
+  # Unet-R50 — NOTE s58 checkpoint lives at .../unet_resnet50/r58/ (on-disk typo for s58)
+  - {label: Unet-R50, slug: unet_resnet50, seed: 19, run_dir: "glob:runs/dev_sweep_rest_hampyeong_s19_*_unet_resnet50_native224_weighted_224_b0_s32", checkpoint: outputs/stage2/unet_resnet50/s19/best.pth}
+  - {label: Unet-R50, slug: unet_resnet50, seed: 42, run_dir: "glob:runs/dev_sweep_rest_hampyeong_s42_*_unet_resnet50_native224_weighted_224_b0_s32", checkpoint: outputs/stage2/unet_resnet50/s42/best.pth}
+  - {label: Unet-R50, slug: unet_resnet50, seed: 58, run_dir: "glob:runs/dev_sweep_rest_hampyeong_s58_*_unet_resnet50_native224_weighted_224_b0_s32", checkpoint: outputs/stage2/unet_resnet50/r58/best.pth}
+
+  - {label: UnetPP-R50, slug: unetplusplus_resnet50, seed: 19, run_dir: "glob:runs/dev_sweep_rest_hampyeong_s19_*_unetplusplus_resnet50_native224_weighted_224_b0_s32", checkpoint: outputs/stage2/unetplusplus_resnet50/s19/best.pth}
+  - {label: UnetPP-R50, slug: unetplusplus_resnet50, seed: 42, run_dir: "glob:runs/dev_sweep_rest_hampyeong_s42_*_unetplusplus_resnet50_native224_weighted_224_b0_s32", checkpoint: outputs/stage2/unetplusplus_resnet50/s42/best.pth}
+  - {label: UnetPP-R50, slug: unetplusplus_resnet50, seed: 58, run_dir: "glob:runs/dev_sweep_rest_hampyeong_s58_*_unetplusplus_resnet50_native224_weighted_224_b0_s32", checkpoint: outputs/stage2/unetplusplus_resnet50/s58/best.pth}
+
+  - {label: DeepLabV3p-R50, slug: deeplabv3plus_resnet50, seed: 19, run_dir: "glob:runs/dev_sweep_rest_hampyeong_s19_*_deeplabv3plus_resnet50_native224_weighted_224_b0_s32", checkpoint: outputs/stage2/deeplabv3plus_resnet50/s19/best.pth}
+  - {label: DeepLabV3p-R50, slug: deeplabv3plus_resnet50, seed: 42, run_dir: "glob:runs/dev_sweep_rest_hampyeong_s42_*_deeplabv3plus_resnet50_native224_weighted_224_b0_s32", checkpoint: outputs/stage2/deeplabv3plus_resnet50/s42/best.pth}
+  - {label: DeepLabV3p-R50, slug: deeplabv3plus_resnet50, seed: 58, run_dir: "glob:runs/dev_sweep_rest_hampyeong_s58_*_deeplabv3plus_resnet50_native224_weighted_224_b0_s32", checkpoint: outputs/stage2/deeplabv3plus_resnet50/s58/best.pth}
+
+  - {label: DPT-ViTB16, slug: dpt_vit_b_16, seed: 19, run_dir: "glob:runs/dev_sweep_rest_hampyeong_s19_*_dpt_vit_b_16_native224_weighted_224_b0_s32", checkpoint: outputs/stage2/dpt_tu-vit_base_patch16_224.mae/s19/best.pth}
+  - {label: DPT-ViTB16, slug: dpt_vit_b_16, seed: 42, run_dir: "glob:runs/dev_sweep_rest_hampyeong_s42_*_dpt_vit_b_16_native224_weighted_224_b0_s32", checkpoint: outputs/stage2/dpt_tu-vit_base_patch16_224.mae/s42/best.pth}
+  - {label: DPT-ViTB16, slug: dpt_vit_b_16, seed: 58, run_dir: "glob:runs/dev_sweep_rest_hampyeong_s58_*_dpt_vit_b_16_native224_weighted_224_b0_s32", checkpoint: outputs/stage2/dpt_tu-vit_base_patch16_224.mae/s58/best.pth}

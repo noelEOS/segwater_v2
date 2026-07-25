@@ -1,0 +1,57 @@
+# Concurrent-scenes-only Demak sweep, pair-based stage2 checkpoints, seed s58.
+# 4 remaining archs (swin-b + convnextv2 already done). Mirrors the
+# dev_sweep_all_demak_s58 swin-b settings exactly; only input_dir (6 concurrent
+# scenes) and the checkpoint list differ.
+
+sweep:
+  name: "dev_sweep_concurrent_demak_s58"
+  dry_run: false
+  continue_on_error: true
+
+  input_dir: "/home/noel/data_demak_concurrent"
+  input_glob: "S1_*.tif"
+
+  common_overrides:
+    inference.post_processing.smoothing.apply_simplification: true
+    inference.post_processing.smoothing.simplify_tolerance_meters: 1.0
+    inference.post_processing.filtering.apply_length_filter: true
+    inference.post_processing.filtering.min_length_meters: 10000.0
+    inference.data.edge_policy: "shift_inward"
+    inference.stitching.min_weight: 0.001
+    inference.data.num_workers: 8
+    inference.data.batch_size: 256
+    inference.output.probability_precision: "float16"
+
+  checkpoints:
+    - name: "unet_resnet50"
+      checkpoint_path: "outputs/stage2/unet_resnet50/r58/best.pth"
+      model:
+        arch: "unet"
+        encoder_name: "resnet50"
+
+    - name: "unetplusplus_resnet50"
+      checkpoint_path: "outputs/stage2/unetplusplus_resnet50/s58/best.pth"
+      model:
+        arch: "unetplusplus"
+        encoder_name: "resnet50"
+
+    - name: "deeplabv3plus_resnet50"
+      checkpoint_path: "outputs/stage2/deeplabv3plus_resnet50/s58/best.pth"
+      model:
+        arch: "deeplabv3plus"
+        encoder_name: "resnet50"
+
+    - name: "dpt_vit_b_16"
+      checkpoint_path: "outputs/stage2/dpt_tu-vit_base_patch16_224.mae/s58/best.pth"
+      model:
+        arch: "dpt"
+        encoder_name: "tu-vit_base_patch16_224.mae"
+
+  presets:
+    - name: "native224_weighted_224_b0_s32"
+      overrides:
+        inference.data.tile_size: 224
+        inference.data.buffer_size: 0
+        inference.data.stride: 32
+        inference.stitching.mode: "weighted_blend"
+        inference.stitching.blend_window: "hann"

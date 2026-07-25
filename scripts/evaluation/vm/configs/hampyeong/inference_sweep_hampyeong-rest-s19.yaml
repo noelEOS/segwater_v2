@@ -1,0 +1,54 @@
+# Hampyeong sweep, pair-based stage2 checkpoints, seed s19, remaining 4 archs.
+# Mirrors dev_sweep_all_hampyeong_s19 (swin-b) settings exactly; only the
+# checkpoint list and input_glob (excludes ._ AppleDouble junk) differ.
+
+sweep:
+  name: "dev_sweep_rest_hampyeong_s19"
+  dry_run: false
+  continue_on_error: true
+
+  input_dir: "/home/noel/hampyeong_ron_134_ts_16_sn_15"
+  input_glob: "S1B_*.tif"
+
+  common_overrides:
+    inference.post_processing.smoothing.apply_simplification: true
+    inference.post_processing.smoothing.simplify_tolerance_meters: 1.0
+    inference.post_processing.filtering.apply_length_filter: false
+    inference.post_processing.filtering.min_length_meters: 10000.0
+    inference.post_processing.filtering.keep_top_k: 5
+    inference.data.edge_policy: "shift_inward"
+    inference.stitching.min_weight: 0.001
+
+  checkpoints:
+    - name: "unet_resnet50"
+      checkpoint_path: "outputs/stage2/unet_resnet50/s19/best.pth"
+      model:
+        arch: "unet"
+        encoder_name: "resnet50"
+
+    - name: "unetplusplus_resnet50"
+      checkpoint_path: "outputs/stage2/unetplusplus_resnet50/s19/best.pth"
+      model:
+        arch: "unetplusplus"
+        encoder_name: "resnet50"
+
+    - name: "deeplabv3plus_resnet50"
+      checkpoint_path: "outputs/stage2/deeplabv3plus_resnet50/s19/best.pth"
+      model:
+        arch: "deeplabv3plus"
+        encoder_name: "resnet50"
+
+    - name: "dpt_vit_b_16"
+      checkpoint_path: "outputs/stage2/dpt_tu-vit_base_patch16_224.mae/s19/best.pth"
+      model:
+        arch: "dpt"
+        encoder_name: "tu-vit_base_patch16_224.mae"
+
+  presets:
+    - name: "native224_weighted_224_b0_s32"
+      overrides:
+        inference.data.tile_size: 224
+        inference.data.buffer_size: 0
+        inference.data.stride: 32
+        inference.stitching.mode: "weighted_blend"
+        inference.stitching.blend_window: "hann"

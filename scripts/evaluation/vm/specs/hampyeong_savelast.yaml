@@ -1,0 +1,25 @@
+# Swin-B s58 save_last A/B: early_best (deployed step-4800 best-val-mIoU) vs
+# save_last (final step-40320). Replaces ~/score_pairbased_hampyeong_vm_savelast.py.
+# variant_column adds a `variant` column and suffixes the model name. The two
+# entries MUST use distinct checkpoints (the scorer's audit enforces it).
+# early_best run dir sits DIRECTLY under pair_root; save_last under runs/.
+repo: /home/noel/segwater_v2
+nas_root: /home/noel/ancillary/hampyeong/nas_root
+pair_root: outputs/inference
+expected_valid_pixels: 1179967
+variant_column: true
+output: /home/noel/hampyeong_vm_per_date_metrics_savelast.csv
+
+entries:
+  - label: Swin-B
+    slug: swin_b
+    seed: 58
+    variant: early_best
+    run_dir: dev_sweep_all_hampyeong_s58_20260723T024153Z_upernet_swin_base_224_native224_weighted_224_b0_s32
+    checkpoint: outputs/stage2/upernet_tu-swin_base_patch4_window7_224/s58/best.pth
+  - label: Swin-B
+    slug: swin_b
+    seed: 58
+    variant: save_last
+    run_dir: "glob:runs/dev_sweep_savelast_hampyeong_s58_*_upernet_swin_base_224_savelast_native224_weighted_224_b0_s32"
+    checkpoint: outputs/stage2/upernet_tu-swin_base_patch4_window7_224/s58_save_last/upernet_tu-swin_base_patch4_window7_224_s58_step40320_last.pth

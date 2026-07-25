@@ -229,36 +229,51 @@ class SpectralTrainer:
                     })
                     
                 # --- TOP-K CHECKPOINTING LOGIC ---
+                # Ranking value is `objective_metric`: pooled val mIoU on the
+                # train.py path (strata_acc is None, so objective_metric IS
+                # val_miou incl. the same non-finite->0.0 guard -> byte-identical
+                # selection/filenames), else the pair-macro water IoU under HPO
+                # (pooled saturates early and would fill top-k with early ckpts,
+                # while pair-macro keeps rising late).
                 if save_dir is not None:
-                    # If we have less than K checkpoints, or the current mIoU is better than the worst in our top K
-                    if len(top_k_checkpoints) < keep_top_k or val_miou > top_k_checkpoints[0][0]:
+                    # If we have less than K checkpoints, or the current score is better than the worst in our top K
+                    if len(top_k_checkpoints) < keep_top_k or objective_metric > top_k_checkpoints[0][0]:
                         # 6 decimals: 4-dp names produced ties, and the offline
                         # "highest step wins" tie-break picked a non-best ckpt in
                         # 6 of 27 audited seed dirs (best_ckpt_audit.json 2026-07-15).
-                        ckpt_name = f"{self.arch}_{self.encoder}_s{self.seed}_step{global_step}_miou{val_miou:.6f}.pth"
+                        # Distinct `pmwiou` tag under the accumulator so the filename
+                        # states its selection metric (never a pair-macro value under
+                        # a `miou` tag).
+                        if self.strata_acc is not None:
+                            ckpt_name = f"{self.arch}_{self.encoder}_s{self.seed}_step{global_step}_pmwiou{objective_metric:.6f}.pth"
+                        else:
+                            ckpt_name = f"{self.arch}_{self.encoder}_s{self.seed}_step{global_step}_miou{val_miou:.6f}.pth"
                         ckpt_path = os.path.join(save_dir, ckpt_name)
-                        
-                        torch.save({
+
+                        payload = {
                             "step": global_step,
                             # Unwrap so state-dict keys carry no torch.compile
                             # `_orig_mod.` prefix and stay loadable everywhere.
                             "model_state_dict": unwrap_compiled(self.model).state_dict(),
                             "optimizer_state_dict": self.optimizer.state_dict(),
-                            "val_miou": val_miou
-                        }, ckpt_path)
-                        
+                            "val_miou": val_miou,
+                        }
+                        if self.strata_acc is not None:
+                            payload["pair_macro_water_iou"] = objective_metric
+                        torch.save(payload, ckpt_path)
+
                         print(f"Step {global_step}: Saved new Top-{keep_top_k} checkpoint -> {ckpt_name}")
-                        
-                        # Add to list and sort by mIoU (ascending, so index 0 is the lowest mIoU)
-                        top_k_checkpoints.append((val_miou, ckpt_path))
+
+                        # Add to list and sort by score (ascending, so index 0 is the lowest score)
+                        top_k_checkpoints.append((objective_metric, ckpt_path))
                         top_k_checkpoints.sort(key=lambda x: x[0])
-                        
+
                         # If we exceeded our keep limit, remove the lowest one from disk and the list
                         if len(top_k_checkpoints) > keep_top_k:
-                            removed_miou, removed_path = top_k_checkpoints.pop(0)
+                            removed_score, removed_path = top_k_checkpoints.pop(0)
                             if os.path.exists(removed_path):
                                 os.remove(removed_path)
-                                print(f"Removed older checkpoint -> {os.path.basename(removed_path)} (mIoU: {removed_miou:.4f})")
+                                print(f"Removed older checkpoint -> {os.path.basename(removed_path)} (score: {removed_score:.4f})")
 
                 # --- MODEL-ONLY SNAPSHOTS (stage-2 late-window / periodic spine) ---
                 # Saved at every val in the final `snapshot_last_frac` of the run

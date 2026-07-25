@@ -134,6 +134,125 @@ def _tiny_val_loader(n_chips, batch, img=4):
     return _FiniteLoader()
 
 
+class _StubAccumulator:
+    """Minimal strata accumulator: fit() only reads `strat/pair_macro_water_iou`
+    (via val_epoch -> self.strata_acc.compute()) for selection. Yields a
+    controllable pair-macro sequence, one value per val check, so the divergence
+    scenario (pooled DOWN, pair-macro UP) can be driven deterministically.
+    """
+
+    def __init__(self, pmw_sequence):
+        self._seq = list(pmw_sequence)
+        self._i = 0
+        # val_epoch asserts base == N after the val loop; keep them equal.
+        self.base = 0
+        self.N = 0
+
+    def reset(self):
+        pass
+
+    def update(self, logits, y):
+        pass
+
+    def compute(self):
+        val = self._seq[self._i]
+        self._i += 1
+        return {"pair_macro_water_iou": val}
+
+
+def _list_ckpts(save_dir):
+    import os
+
+    return sorted(
+        f for f in os.listdir(save_dir)
+        if f.endswith(".pth") and not f.startswith("best")
+    )
+
+
+def test_topk_selection_uses_pair_macro_when_accumulator_active(tmp_path):
+    """Divergence scenario: pooled mIoU DECREASES while pair-macro INCREASES.
+
+    top-k must keep the pair-macro-best (i.e. LATEST) checkpoints, name them with
+    the `pmwiou` tag, and store both metric keys in the payload.
+    """
+    import os
+
+    # Four val checks. Pooled mIoU falls each check; pair-macro rises each check.
+    pooled_seq = [0.90, 0.80, 0.70, 0.60]
+    pmw_seq = [0.10, 0.20, 0.30, 0.40]
+
+    acc = _StubAccumulator(pmw_seq)
+    trainer = _make_trainer(strata_accumulator=acc)
+
+    pooled_iter = iter(pooled_seq)
+    # val_epoch is stubbed: return the falling pooled mIoU, and mirror the stub
+    # accumulator's compute() into the strat/* key exactly as the real val_epoch
+    # would (so fit() reads objective_metric from the metrics dict).
+    def _fake_val(dl):
+        pooled = next(pooled_iter)
+        return {"mIoU": pooled, "loss": 0.1,
+                "strat/pair_macro_water_iou": acc.compute()["pair_macro_water_iou"]}
+
+    trainer.val_epoch = _fake_val
+    loader = _CountingLoader(batch_size=8)
+
+    keep_top_k = 2
+    best_iou, best_ckpt_path, final_metrics = trainer.fit(
+        loader, loader, max_steps=16, val_check_interval=4,
+        save_dir=str(tmp_path), keep_top_k=keep_top_k,
+    )
+
+    kept = _list_ckpts(tmp_path)
+    # keep_top_k=2 and pair-macro rising => the two LATEST checks survive
+    # (steps 12 and 16), tagged pmwiou, NOT the early (pooled-best) ones.
+    assert len(kept) == keep_top_k, kept
+    assert all("pmwiou" in name for name in kept), kept
+    assert all("_miou" not in name for name in kept), kept
+    steps = sorted(int(name.split("_step")[1].split("_")[0]) for name in kept)
+    assert steps == [12, 16], steps
+
+    # best.pth -> pair-macro-best (latest, step 16, pmw 0.40)
+    assert best_ckpt_path is not None
+    assert "pmwiou0.400000" in os.path.basename(best_ckpt_path)
+
+    # payload carries BOTH keys under the accumulator
+    payload = torch.load(best_ckpt_path, map_location="cpu", weights_only=False)
+    assert "val_miou" in payload
+    assert "pair_macro_water_iou" in payload
+    assert abs(payload["pair_macro_water_iou"] - 0.40) < 1e-9
+    # slot-0 pooled bookkeeping is unchanged (max pooled seen)
+    assert abs(best_iou - 0.90) < 1e-9
+
+
+def test_topk_selection_pooled_names_when_no_accumulator(tmp_path):
+    """No accumulator: `miou`-tagged names, ranked by pooled mIoU (unchanged)."""
+    import os
+
+    pooled_seq = [0.60, 0.70, 0.80, 0.90]  # rising: latest are the best
+    trainer = _make_trainer(strata_accumulator=None)
+    pooled_iter = iter(pooled_seq)
+    trainer.val_epoch = lambda dl: {"mIoU": next(pooled_iter), "loss": 0.1}
+    loader = _CountingLoader(batch_size=8)
+
+    keep_top_k = 2
+    _, best_ckpt_path, _ = trainer.fit(
+        loader, loader, max_steps=16, val_check_interval=4,
+        save_dir=str(tmp_path), keep_top_k=keep_top_k,
+    )
+
+    kept = _list_ckpts(tmp_path)
+    assert len(kept) == keep_top_k, kept
+    assert all("_miou" in name for name in kept), kept
+    assert all("pmwiou" not in name for name in kept), kept
+    steps = sorted(int(name.split("_step")[1].split("_")[0]) for name in kept)
+    assert steps == [12, 16], steps  # pooled-best = latest two
+
+    assert "miou0.900000" in os.path.basename(best_ckpt_path)
+    payload = torch.load(best_ckpt_path, map_location="cpu", weights_only=False)
+    assert "val_miou" in payload
+    assert "pair_macro_water_iou" not in payload  # no key on the no-accum path
+
+
 def test_val_epoch_with_accumulator_emits_strat_keys():
     n_chips = 6
     stratum_id = np.array([0, 1, 2, 2, 2, 2], dtype=np.int64)

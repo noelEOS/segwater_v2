@@ -29,6 +29,11 @@ import torch
 
 STEP_RE = re.compile(r"step(\d+)")
 MIOU_RE = re.compile(r"miou([0-9]*\.?[0-9]+)")
+# SWA checkpoints (build_swa_checkpoint.py: `_swa{K}_step{min}-{max}.pth`) are a
+# derived, competing checkpoint-selection ARM, not a candidate for best.pth --
+# keeping them out of the pool is what makes best-vs-SWA an independent contrast.
+# They also carry val_miou=None, which the float cross-check below must survive.
+SWA_RE = re.compile(r"_swa\d+_step")
 
 DEFAULT_MODELS = [
     "upernet_tu-swin_base_patch4_window7_224",
@@ -76,6 +81,7 @@ def main() -> None:
             step_ckpts = [p for p in sorted(seed_dir.glob("*.pth"))
                           if p.name != "best.pth"
                           and "_snap_" not in p.name
+                          and not SWA_RE.search(p.name)
                           and not p.name.endswith("_last.pth")]
             if not step_ckpts:
                 raise SystemExit(f"No step checkpoints in {seed_dir}")
@@ -87,8 +93,11 @@ def main() -> None:
             floats = []
             for p in step_ckpts:
                 ck = torch.load(p, map_location="cpu", weights_only=True)
-                floats.append((float(ck.get("val_miou", float("nan"))),
-                               int(ck.get("step", -1)), p))
+                # val_miou may be absent or explicitly None (model-only/derived
+                # checkpoints); treat both as "no score" rather than crashing.
+                raw_miou, raw_step = ck.get("val_miou"), ck.get("step")
+                floats.append((float(raw_miou) if raw_miou is not None else float("-inf"),
+                               int(raw_step) if raw_step is not None else -1, p))
             float_pick = sorted(floats, key=lambda t: (t[0], t[1]))[-1][2]
 
             best = seed_dir / "best.pth"

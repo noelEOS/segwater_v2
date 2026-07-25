@@ -10,7 +10,8 @@ persistent_workers: true
 # metric) during validation. HPO (optimize.py) uses the subset npz
 # data/hpo_strata/hpo_val_pair_strata.npz (baked eligible mask, >=5-mixed gate)
 # and makes it the objective; stage2 (train.py) uses the full-val ladder npz
-# experiments/CHECKPOINT_LADDER/strata_index.npz (no eligible key -> derived as
+# data/full_val_strata/strata_index.npz (git-tracked, so the VM gets it via
+# git pull -- no scp needed; no eligible key -> derived as
 # pair_mixed_count >= 20) as added val/strat/* metrics only (selection stays
 # pooled-mIoU). null keeps the pooled val-mIoU objective and leaves the val path
 # byte-identical.

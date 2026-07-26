@@ -126,13 +126,47 @@ Short version for an agent asked to do SDS on the VM:
    `pip install pytz PyQt5 bs4 wget astropy` **plus** conda-only
    `gdal=3.12.3` pinned to the env's `libgdal-core`. No `eda_coastsat` env
    is needed on the VM; `ee` is not needed.
-3. `cd ~/SDS_Benchmark_slim && python scripts/sds/run_sds_from_rasters.py
+3. **Stage the scenes correctly — see the scene-staging rule below.** Get this
+   wrong and everything downstream is a plausible result on the wrong sample.
+4. `cd ~/SDS_Benchmark_slim && python scripts/sds/run_sds_from_rasters.py
    --site <SITE> --raster-dir <run dir> --out-dir ~/sds_vm_eval/<label>
    --thresholds 0.5 --segwater-root ~/segwater_v2`
    (`--segwater-root` is required — it imports Segwater's ShorelineVectorizer.)
    For a real threshold sweep pass the comma list `0.1,…,0.9`; a single
    `--thresholds 0.5` still prints a "Sweep summary" header with ONE row.
-4. Egress CSVs only.
+5. Egress CSVs only.
+
+### ⚠️ Scene staging — the rule (full detail in the runbook)
+
+> **Stage every scene of the frame whose date falls inside the in-situ
+> groundtruth's CALENDAR WINDOW. Nothing more, nothing less.**
+
+SDS **silently ignores** scenes it cannot pair with a survey, so a mis-staged
+input dir never announces itself — `n_shorelines` counts rasters *fed in*, not
+rasters *scored*. Check `n`.
+
+- **Nothing more**: at 3 of the 4 canonical frames the in-situ record ends years
+  before the imagery, so most scenes can never contribute.
+- **Nothing less**: do **NOT** pre-filter to scenes with a survey within
+  `max_days` (10). That is a *framework knob* applied at scoring time, not a
+  property of the data. Staging on it makes the staged set depend on a mutable
+  setting and breaks the provenance claim *"we used all scenes from frame X
+  within the survey period"*. Such scenes change **no metric** — the pipeline
+  drops them at pairing — so keeping them is free.
+- ⚠️ **Never reconstruct the split with a date cutoff**; compute it against the
+  groundtruth dates and write the keep/drop lists to `~/<site>_sds_split.json`.
+- Parked scenes are **moved, never deleted**, into a sibling
+  `*_no_groundtruth/` dir with a README + restore command.
+
+Canonical frames, measured 2026-07-27 (staged / archive; scorable at the default
+10-day tolerance in parentheses):
+
+| site | canonical frame | staged / archive | (scorable @10 d) |
+|---|---|---|---|
+| NARRABEEN | `ron_147_ts_9_sn_16` | **87** / 215 | (82) |
+| DUCK | `ron_4_ts_24_sn_19` | **109** / 109 — no filtering needed | (79) |
+| TORREYPINES | `ron_71` | **25** / 50 ⚠️ thin | (15) |
+| TRUCVERT | `ron_8_ts_30_sn_20` | **78** / 139 | (73) |
 
 ⚠️ Multi-run sweeps: `batch_sds_sweep_runs.sh` takes **every** subdir of the
 runs folder with no site filter (the shared VM runs dir mixes all sites), and

@@ -53,6 +53,28 @@ export LD_LIBRARY_PATH=$HOME/miniforge3/envs/torch211_cu128_inference/lib
 `torch211_cu128_inference` may be missing `scikit-learn` after a VM cleanup
 (`pip install scikit-learn` into that env) — needed by the Demak AUC scorer.
 
+## ⚠️ Fresh VM: the segwater package must be pip-installed editable
+
+```bash
+cd ~/segwater_v2 && python -m pip install -e . --no-deps --no-build-isolation
+```
+
+Without it `import src` resolves only when cwd *is* the repo root.
+`run_inference_sweep.py` spawns per-group subprocesses that do not inherit that
+cwd, so **every group dies with `ModuleNotFoundError: No module named 'src'`** —
+and the sweep still **exits 0**, printing only `FAILED GROUP` lines. It looks
+like a config error, not an env error. Seen on a fresh VM 2026-07-26.
+
+Check it the way the failure actually manifests — from *outside* the repo:
+
+```bash
+cd /tmp && python -c "from src.utils.vectorizer import ShorelineVectorizer"
+```
+
+`--no-deps` keeps pip from disturbing the conda-installed torch/GDAL stack.
+Other fresh-VM gaps seen the same day: `cv2` (`pip install
+opencv-python-headless`) and the SDS extras in `docs/RUNBOOK_sds_vm_eval.md` §0b.
+
 ## HARD RULE — no heavy-TIFF egress
 
 Score VM-side; only the KB-scale CSV outputs come back. Never scp probability

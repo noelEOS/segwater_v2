@@ -151,8 +151,11 @@ rasters *scored*. Check `n`.
   `max_days` (10). That is a *framework knob* applied at scoring time, not a
   property of the data. Staging on it makes the staged set depend on a mutable
   setting and breaks the provenance claim *"we used all scenes from frame X
-  within the survey period"*. Such scenes change **no metric** — the pipeline
-  drops them at pairing — so keeping them is free.
+  within the survey period"*. ⚠️ Such scenes are *nearly* inert but **not
+  exactly**: measured 2026-07-27, they move RMSE by ≤0.16 m at thr 0.5 (6 of 12
+  cells identical to <0.001 m) because pairing is nearest-survey-within-tolerance,
+  so extra candidates can change which scene wins a survey. Far inside seed-SD,
+  but re-staging means **re-running**, not relabelling.
 - ⚠️ **Never reconstruct the split with a date cutoff**; compute it against the
   groundtruth dates and write the keep/drop lists to `~/<site>_sds_split.json`.
 - Parked scenes are **moved, never deleted**, into a sibling

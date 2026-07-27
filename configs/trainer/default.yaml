@@ -22,11 +22,11 @@ perf:
 
 # Also save the FINAL-step weights (as *_step<N>_last.pth, outside top-k and
 # never pruned). For early-vs-late checkpoint comparisons on external evals;
-# selection still uses best val mIoU. Applies to stage-2 (train.py) only —
-# HPO trials never save a last checkpoint.
+# selection still uses best val mIoU. This key applies to stage-2 (train.py);
+# HPO uses hpo_checkpoints.save_last from configs/config.yaml.
 save_last: true
 
-# Model-only checkpoint snapshots (stage-2 only; HPO never snapshots). last_frac
+# Model-only checkpoint snapshots (stage-2 only; HPO does not request them). last_frac
 # saves at every val check in the final fraction of the run (post-LR-decay);
 # every_n_vals also saves every Nth val across the whole run (0 = off). Outside
 # top-k, never pruned; ~1/3 the size of a full checkpoint (no optimizer state).

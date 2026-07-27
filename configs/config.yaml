@@ -4,14 +4,44 @@ defaults:
   - trainer: default
   - _self_
 
-# Optuna Configuration
-n_trials: 60
-# HyperbandPruner min_resource in global steps. 800 = the shipped HPO
-# protocol. Do NOT lower to 400: warmup_steps=500, so a rung at 400 ranks
-# trials mid-warmup (80% of base LR, cosine decay not started) and biases
-# pruning against high-LR configs — and base LR is itself a swept parameter.
-# With val checks at 400/800/1200, 800 is the earliest post-warmup rung.
-pruner_min_resource: 800
+# Mixed-forward ConvNeXtV2-Tiny HPO protocol. At batch 256 the 612,364-chip
+# train split has ceil(612364/256) = 2,393 optimizer steps per epoch.
+n_trials: 16
+
+search_space:
+  base_learning_rate:
+    low: 3.0e-5
+    high: 1.0e-3
+    log: true
+  weight_decay:
+    low: 1.0e-7
+    high: 1.0e-1
+    log: true
+  label_smoothing:
+    low: 0.0
+    high: 0.12
+    log: false
+  # Historical name: this is the Lovasz-loss mixture weight, not Dice.
+  dice_weight:
+    low: 0.0
+    high: 0.5
+    log: false
+
+hpo:
+  max_steps: 23930                 # 10 epochs
+  scheduler_total_steps: 23930     # fixed for every trial, including pruned ones
+  warmup_steps: 500
+  val_check_interval: 4786         # report every 2 epochs
+
+# Rungs: 4,786 / 9,572 / 19,144 steps = 2 / 4 / 8 epochs. With 16 trials and
+# reduction_factor=2 this targets ~16 -> 8 -> 4 -> 2 trials; survivors finish
+# the common 23,930-step (10-epoch) horizon.
+pruner:
+  type: successive_halving
+  min_resource: 4786
+  reduction_factor: 2
+  min_early_stopping_rate: 0
+  bootstrap_count: 0
 
 # HPO checkpoints are isolated by trial under root_dir. With the defaults, each
 # retained file contains only {"model_state_dict": ...}: enough for
@@ -35,4 +65,5 @@ seed: 42
 device: cuda
 output_dir: outputs/stage2/${model.arch}_${model.encoder_name}/${now:%H-%M-%S}_s${seed}
 
-study_name: hpo_pm_${model.arch}_${model.encoder_name}
+# Keep this protocol isolated from legacy studies whose bounds and pruner differ.
+study_name: hpo_mixed80_blocked_sha_${model.arch}_${model.encoder_name}

@@ -14,6 +14,11 @@ from src.models.losses import CoastalCompositeLoss
 from src.engine.trainer import SpectralTrainer
 from src.utils.stratified_metrics import StratifiedWaterAccumulator
 from src.utils.perf import apply_perf_flags, build_adamw, maybe_compile
+from src.utils.hpo import (
+    build_pruner,
+    resolve_hpo_schedule,
+    suggest_hyperparameters,
+)
 from dotenv import load_dotenv
 import logging
 from optuna.storages import RDBStorage
@@ -35,12 +40,12 @@ def objective(trial: optuna.Trial, cfg: DictConfig):
     torch.manual_seed(seed)
     torch.cuda.manual_seed_all(seed)
 
-    # Suggest hyperparameters
-    #arch = trial.suggest_categorical("arch", ["unet", "upernet", "segformer"])
-    base_lr = trial.suggest_float("base_learning_rate", 1e-5, 1e-2, log=True)
-    weight_decay = trial.suggest_float("weight_decay", 1e-5, 1e-1, log=True)
-    label_smoothing = trial.suggest_float("label_smoothing", 0.0, 0.2)
-    dice_weight = trial.suggest_float("dice_weight", 0.0, 1.0)
+    # Suggest hyperparameters from the tracked, lineage-specific search space.
+    params = suggest_hyperparameters(trial, cfg.get("search_space", None))
+    base_lr = params["base_learning_rate"]
+    weight_decay = params["weight_decay"]
+    label_smoothing = params["label_smoothing"]
+    dice_weight = params["dice_weight"]
     
     #cfg.model.arch = arch
     cfg.trainer.base_learning_rate = base_lr
@@ -68,7 +73,7 @@ def objective(trial: optuna.Trial, cfg: DictConfig):
     logger.info(f"Base LR:           {base_lr:.2e}")
     logger.info(f"Weight Decay:      {weight_decay:.2e}")
     logger.info(f"Label Smoothing:   {label_smoothing:.4f}")
-    logger.info(f"Dice Weight:       {dice_weight:.4f}")
+    logger.info(f"Lovasz Weight:     {dice_weight:.4f} (config key: dice_weight)")
     logger.info("="*40)
     # -------------------------
 
@@ -137,15 +142,25 @@ def objective(trial: optuna.Trial, cfg: DictConfig):
             "data_lineage/steps_per_epoch": len(train_dl)
         })
 
-    max_steps = cfg.trainer.max_steps
-    warmup_steps = cfg.trainer.warmup_steps
-    val_check_interval = cfg.trainer.val_check_interval
+    hpo_schedule = resolve_hpo_schedule(
+        cfg.get("hpo", None),
+        cfg.trainer,
+    )
+    max_steps = hpo_schedule["max_steps"]
+    scheduler_total_steps = hpo_schedule["scheduler_total_steps"]
+    warmup_steps = hpo_schedule["warmup_steps"]
+    val_check_interval = hpo_schedule["val_check_interval"]
     
     scheduler_warmup = torch.optim.lr_scheduler.LinearLR(
         optimizer, start_factor=1e-6, end_factor=1.0, total_iters=max(1, warmup_steps)
     )
     scheduler_decay = torch.optim.lr_scheduler.CosineAnnealingLR(
-        optimizer, T_max=max(1, max_steps - warmup_steps), eta_min=1e-6
+        optimizer,
+        # This remains the full 23,930-step horizon for every trial. The
+        # SuccessiveHalvingPruner stops weak trials; it never shortens or
+        # reconstructs their cosine schedule.
+        T_max=max(1, scheduler_total_steps - warmup_steps),
+        eta_min=1e-6,
     )
     scheduler = torch.optim.lr_scheduler.SequentialLR(
         optimizer, schedulers=[scheduler_warmup, scheduler_decay], milestones=[max(1, warmup_steps)]
@@ -277,11 +292,10 @@ def main(cfg: DictConfig):
         storage = db_path
         print(f"No remote DB found. Falling back to local SQLite: {db_path}")
     
-    # min_resource is in global steps; default 800 = the shipped HPO protocol.
-    # See configs/config.yaml for why it must not drop below warmup_steps=500
-    # (a rung at 400 would rank trials mid-warmup, biasing against high-LR
-    # configs while base LR is itself a swept parameter).
-    pruner = optuna.pruners.HyperbandPruner(min_resource=cfg.get("pruner_min_resource", 800))
+    pruner = build_pruner(
+        cfg.get("pruner", None),
+        legacy_min_resource=cfg.get("pruner_min_resource", 800),
+    )
 
     study = optuna.create_study(
         direction="maximize",
@@ -291,7 +305,7 @@ def main(cfg: DictConfig):
         load_if_exists=True
     )
     
-    # default to 60 if n_trials is not provided
+    # Keep a legacy fallback for configs that predate the tracked trial count.
     study.optimize(lambda trial: objective(trial, cfg), n_trials=cfg.get("n_trials", 60))
     logger.info(f"Optimization Complete. Best params: {study.best_params}")
 

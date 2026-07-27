@@ -13,6 +13,20 @@ n_trials: 60
 # With val checks at 400/800/1200, 800 is the earliest post-warmup rung.
 pruner_min_resource: 800
 
+# HPO checkpoints are isolated by trial under root_dir. With the defaults, each
+# retained file contains only {"model_state_dict": ...}: enough for
+# inference/serving, without optimizer state because HPO trials are not resumed.
+# keep_top_k ranks by the active objective (pair-macro water IoU when
+# strata_index_path is set); save_last additionally preserves the completed
+# trial's final-step weights, which correspond to optimize.py's final-check
+# objective even when the within-trial best occurred earlier.
+hpo_checkpoints:
+  enabled: true
+  root_dir: ${output_dir}/hpo_checkpoints
+  keep_top_k: 1
+  save_last: true
+  model_weights_only: true
+
 # Database Storage (Resolves from .env, defaults to empty string)
 optuna_storage: ${oc.env:NEON_DB_URL, ''}
 

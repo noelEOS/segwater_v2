@@ -87,6 +87,7 @@ class SpectralTrainer:
             save_last: bool = False,
             snapshot_last_frac: float = 0.0,
             snapshot_every_n_vals: int = 0,
+            model_weights_only: bool = False,
         ):
             #import optuna
             import wandb
@@ -103,10 +104,31 @@ class SpectralTrainer:
             n_vals = 0  # completed validations, for the snapshot cadence
             val_miou = float("nan")  # defined even if the loop body never runs
             top_k_checkpoints = [] # List to track (val_miou, ckpt_path)
+            last_ckpt_path = None
             best_val_miou = 0.0
             # Full metrics dict of the LAST val check; the caller reads the
             # stratified objective from it (empty until the first val runs).
             final_val_metrics_dict = {}
+
+            keep_top_k = int(keep_top_k)
+            if keep_top_k < 0:
+                raise ValueError(f"keep_top_k must be >= 0, got {keep_top_k}")
+            if save_dir is not None:
+                os.makedirs(save_dir, exist_ok=True)
+
+            def _checkpoint_payload(*, include_optimizer, **metadata):
+                """Build either the legacy training payload or serving weights only."""
+                payload = {
+                    # Unwrap so state-dict keys carry no torch.compile
+                    # `_orig_mod.` prefix and stay loadable everywhere.
+                    "model_state_dict": unwrap_compiled(self.model).state_dict(),
+                }
+                if model_weights_only:
+                    return payload
+                payload.update(metadata)
+                if include_optimizer:
+                    payload["optimizer_state_dict"] = self.optimizer.state_dict()
+                return payload
 
             train_iterator = iter(train_dataloader)
             
@@ -235,7 +257,7 @@ class SpectralTrainer:
                 # selection/filenames), else the pair-macro water IoU under HPO
                 # (pooled saturates early and would fill top-k with early ckpts,
                 # while pair-macro keeps rising late).
-                if save_dir is not None:
+                if save_dir is not None and keep_top_k > 0:
                     # If we have less than K checkpoints, or the current score is better than the worst in our top K
                     if len(top_k_checkpoints) < keep_top_k or objective_metric > top_k_checkpoints[0][0]:
                         # 6 decimals: 4-dp names produced ties, and the offline
@@ -250,16 +272,16 @@ class SpectralTrainer:
                             ckpt_name = f"{self.arch}_{self.encoder}_s{self.seed}_step{global_step}_miou{val_miou:.6f}.pth"
                         ckpt_path = os.path.join(save_dir, ckpt_name)
 
-                        payload = {
+                        metadata = {
                             "step": global_step,
-                            # Unwrap so state-dict keys carry no torch.compile
-                            # `_orig_mod.` prefix and stay loadable everywhere.
-                            "model_state_dict": unwrap_compiled(self.model).state_dict(),
-                            "optimizer_state_dict": self.optimizer.state_dict(),
                             "val_miou": val_miou,
                         }
                         if self.strata_acc is not None:
-                            payload["pair_macro_water_iou"] = objective_metric
+                            metadata["pair_macro_water_iou"] = objective_metric
+                        payload = _checkpoint_payload(
+                            include_optimizer=True,
+                            **metadata,
+                        )
                         torch.save(payload, ckpt_path)
 
                         print(f"Step {global_step}: Saved new Top-{keep_top_k} checkpoint -> {ckpt_name}")
@@ -275,6 +297,16 @@ class SpectralTrainer:
                                 os.remove(removed_path)
                                 print(f"Removed older checkpoint -> {os.path.basename(removed_path)} (score: {removed_score:.4f})")
 
+                        # Refresh immediately rather than only after fit()
+                        # completes. A pruned HPO trial raises below, so without
+                        # this its retained checkpoint would have no stable
+                        # best.pth entry point.
+                        current_best_path = top_k_checkpoints[-1][1]
+                        link_path = os.path.join(save_dir, "best.pth")
+                        if os.path.lexists(link_path):
+                            os.remove(link_path)
+                        os.symlink(os.path.basename(current_best_path), link_path)
+
                 # --- MODEL-ONLY SNAPSHOTS (stage-2 late-window / periodic spine) ---
                 # Saved at every val in the final `snapshot_last_frac` of the run
                 # (post-LR-decay window) and/or every `snapshot_every_n_vals` vals.
@@ -286,11 +318,14 @@ class SpectralTrainer:
                 if save_dir is not None and (in_late or periodic):
                     snap_name = f"{self.arch}_{self.encoder}_s{self.seed}_step{global_step}_snap_miou{val_miou:.6f}.pth"
                     snap_path = os.path.join(save_dir, snap_name)
-                    torch.save({
-                        "step": global_step,
-                        "model_state_dict": unwrap_compiled(self.model).state_dict(),
-                        "val_miou": val_miou,
-                    }, snap_path)
+                    torch.save(
+                        _checkpoint_payload(
+                            include_optimizer=False,
+                            step=global_step,
+                            val_miou=val_miou,
+                        ),
+                        snap_path,
+                    )
                     print(f"Step {global_step}: Saved snapshot -> {snap_name}")
 
                 if trial is not None:
@@ -308,16 +343,19 @@ class SpectralTrainer:
             if save_dir is not None and save_last:
                 last_name = f"{self.arch}_{self.encoder}_s{self.seed}_step{global_step}_last.pth"
                 last_path = os.path.join(save_dir, last_name)
-                torch.save({
-                    "step": global_step,
-                    "model_state_dict": unwrap_compiled(self.model).state_dict(),
-                    "optimizer_state_dict": self.optimizer.state_dict(),
-                    "val_miou": val_miou,
-                }, last_path)
+                torch.save(
+                    _checkpoint_payload(
+                        include_optimizer=True,
+                        step=global_step,
+                        val_miou=val_miou,
+                    ),
+                    last_path,
+                )
+                last_ckpt_path = last_path
                 print(f"Saved final-step checkpoint -> {last_name}")
 
             # Return the path to the best checkpoint (the last item in our sorted list)
-            best_ckpt_path = top_k_checkpoints[-1][1] if top_k_checkpoints else None
+            best_ckpt_path = top_k_checkpoints[-1][1] if top_k_checkpoints else last_ckpt_path
             # Persist the full-float argmax as best.pth (relative symlink) so
             # downstream loaders never depend on parsing rounded filenames.
             if best_ckpt_path is not None:

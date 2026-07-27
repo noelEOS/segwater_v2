@@ -177,39 +177,78 @@ def objective(trial: optuna.Trial, cfg: DictConfig):
         precision=cfg.trainer.get("precision", "fp16"),
         gradient_clip_val=cfg.trainer.gradient_clip_val,
         num_classes=cfg.model.num_classes,
+        arch=cfg.model.arch,
+        encoder=cfg.model.encoder_name,
+        seed=cfg.seed,
         accumulate_grad_batches=cfg.trainer.get("accumulate_grad_batches", 1),
         log_every_n_steps=cfg.trainer.get("log_every_n_steps", 1),
         strata_accumulator=strata_acc,
     )
 
-    best_iou, _, final_metrics = trainer.fit(
-        train_dataloader=train_dl,
-        val_dataloader=val_dl,
-        max_steps=max_steps,
-        val_check_interval=val_check_interval,
-        trial=trial
-    )
+    checkpoint_cfg = cfg.get("hpo_checkpoints", {})
+    checkpoint_enabled = bool(checkpoint_cfg.get("enabled", False))
+    trial_save_dir = None
+    if checkpoint_enabled:
+        checkpoint_root = str(
+            checkpoint_cfg.get(
+                "root_dir",
+                os.path.join(str(cfg.output_dir), "hpo_checkpoints"),
+            )
+        )
+        trial_save_dir = os.path.join(checkpoint_root, f"trial_{trial.number:05d}")
+        os.makedirs(trial_save_dir, exist_ok=True)
+        # Set this before fit() so even a pruned trial remains discoverable.
+        trial.set_user_attr("checkpoint_dir", os.path.abspath(trial_save_dir))
 
-    if strata_acc is not None:
-        # Objective = FINAL val check's pair-macro water IoU (non-finite -> 0.0,
-        # matching the trainer's guard). Guardrails + pooled diagnostic recorded
-        # as user_attrs for post-hoc inspection, NOT folded into the objective.
-        objective_value = final_metrics.get("strat/pair_macro_water_iou", float("nan"))
-        if not math.isfinite(objective_value):
-            objective_value = 0.0
-        trial.set_user_attr("pair_macro_water_iou", objective_value)
-        trial.set_user_attr("n_pairs_used", final_metrics.get("strat/n_pairs_used", float("nan")))
-        trial.set_user_attr("pure_land_fpr", final_metrics.get("strat/pure_land_fpr", float("nan")))
-        trial.set_user_attr("pure_water_fnr", final_metrics.get("strat/pure_water_fnr", float("nan")))
-        trial.set_user_attr("mixed_precision", final_metrics.get("strat/mixed_precision", float("nan")))
-        trial.set_user_attr("mixed_recall", final_metrics.get("strat/mixed_recall", float("nan")))
-        trial.set_user_attr("pooled_best_miou", best_iou)
-    else:
-        objective_value = best_iou
+    try:
+        best_iou, best_ckpt_path, final_metrics = trainer.fit(
+            train_dataloader=train_dl,
+            val_dataloader=val_dl,
+            max_steps=max_steps,
+            val_check_interval=val_check_interval,
+            trial=trial,
+            save_dir=trial_save_dir,
+            keep_top_k=int(checkpoint_cfg.get("keep_top_k", 1)),
+            save_last=bool(checkpoint_cfg.get("save_last", True)),
+            model_weights_only=bool(checkpoint_cfg.get("model_weights_only", True)),
+        )
 
-    datamodule.teardown()
-    run.finish()
-    return objective_value
+        if best_ckpt_path is not None:
+            best_ckpt_path = os.path.abspath(best_ckpt_path)
+            trial.set_user_attr("checkpoint_path", best_ckpt_path)
+            trial.set_user_attr("best_checkpoint_path", best_ckpt_path)
+        if trial_save_dir is not None and bool(checkpoint_cfg.get("save_last", True)):
+            final_ckpt_path = os.path.abspath(os.path.join(
+                trial_save_dir,
+                f"{cfg.model.arch}_{cfg.model.encoder_name}_s{cfg.seed}_"
+                f"step{max_steps}_last.pth",
+            ))
+            if os.path.exists(final_ckpt_path):
+                trial.set_user_attr("final_checkpoint_path", final_ckpt_path)
+
+        if strata_acc is not None:
+            # Objective = FINAL val check's pair-macro water IoU (non-finite -> 0.0,
+            # matching the trainer's guard). Guardrails + pooled diagnostic recorded
+            # as user_attrs for post-hoc inspection, NOT folded into the objective.
+            objective_value = final_metrics.get("strat/pair_macro_water_iou", float("nan"))
+            if not math.isfinite(objective_value):
+                objective_value = 0.0
+            trial.set_user_attr("pair_macro_water_iou", objective_value)
+            trial.set_user_attr("n_pairs_used", final_metrics.get("strat/n_pairs_used", float("nan")))
+            trial.set_user_attr("pure_land_fpr", final_metrics.get("strat/pure_land_fpr", float("nan")))
+            trial.set_user_attr("pure_water_fnr", final_metrics.get("strat/pure_water_fnr", float("nan")))
+            trial.set_user_attr("mixed_precision", final_metrics.get("strat/mixed_precision", float("nan")))
+            trial.set_user_attr("mixed_recall", final_metrics.get("strat/mixed_recall", float("nan")))
+            trial.set_user_attr("pooled_best_miou", best_iou)
+        else:
+            objective_value = best_iou
+
+        return objective_value
+    finally:
+        # TrialPruned is raised inside trainer.fit(). Always release persistent
+        # DataLoader workers and close the wandb run on that path too.
+        datamodule.teardown()
+        run.finish()
 
 @hydra.main(version_base="1.3", config_path="../configs", config_name="config")
 def main(cfg: DictConfig):

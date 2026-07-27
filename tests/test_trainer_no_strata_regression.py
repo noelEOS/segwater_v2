@@ -219,6 +219,7 @@ def test_topk_selection_uses_pair_macro_when_accumulator_active(tmp_path):
     payload = torch.load(best_ckpt_path, map_location="cpu", weights_only=False)
     assert "val_miou" in payload
     assert "pair_macro_water_iou" in payload
+    assert "optimizer_state_dict" in payload
     assert abs(payload["pair_macro_water_iou"] - 0.40) < 1e-9
     # slot-0 pooled bookkeeping is unchanged (max pooled seen)
     assert abs(best_iou - 0.90) < 1e-9
@@ -251,6 +252,73 @@ def test_topk_selection_pooled_names_when_no_accumulator(tmp_path):
     payload = torch.load(best_ckpt_path, map_location="cpu", weights_only=False)
     assert "val_miou" in payload
     assert "pair_macro_water_iou" not in payload  # no key on the no-accum path
+    assert "optimizer_state_dict" in payload
+
+
+def test_model_weights_only_checkpoint_payload(tmp_path):
+    """HPO mode saves serving weights without optimizer or metric payloads."""
+    import os
+
+    trainer = _make_trainer(strata_accumulator=None)
+    trainer.val_epoch = lambda dl: {"mIoU": 0.75, "loss": 0.1}
+    loader = _CountingLoader(batch_size=8)
+
+    _, best_ckpt_path, _ = trainer.fit(
+        loader,
+        loader,
+        max_steps=4,
+        val_check_interval=4,
+        save_dir=str(tmp_path),
+        keep_top_k=1,
+        save_last=True,
+        model_weights_only=True,
+    )
+
+    assert best_ckpt_path is not None
+    assert os.path.islink(tmp_path / "best.pth")
+    saved = _list_ckpts(tmp_path)
+    assert len(saved) == 2  # objective-best plus final-step weights
+
+    for name in saved:
+        payload = torch.load(tmp_path / name, map_location="cpu", weights_only=True)
+        assert set(payload) == {"model_state_dict"}
+        assert payload["model_state_dict"]
+
+
+def test_pruned_trial_keeps_discoverable_best_weights(tmp_path):
+    """Pruning raises before fit() returns, but best.pth must already be valid."""
+    import os
+
+    class _PruningTrial:
+        def report(self, value, step):
+            self.reported = (value, step)
+
+        def should_prune(self):
+            return True
+
+    trainer = _make_trainer(strata_accumulator=None)
+    trainer.val_epoch = lambda dl: {"mIoU": 0.65, "loss": 0.1}
+    loader = _CountingLoader(batch_size=8)
+    trial = _PruningTrial()
+
+    with pytest.raises(trainer_module.optuna.TrialPruned):
+        trainer.fit(
+            loader,
+            loader,
+            max_steps=8,
+            val_check_interval=4,
+            trial=trial,
+            save_dir=str(tmp_path),
+            keep_top_k=1,
+            model_weights_only=True,
+        )
+
+    best_link = tmp_path / "best.pth"
+    assert os.path.islink(best_link)
+    assert best_link.resolve().exists()
+    payload = torch.load(best_link, map_location="cpu", weights_only=True)
+    assert set(payload) == {"model_state_dict"}
+    assert trial.reported == (0.65, 4)
 
 
 def test_val_epoch_with_accumulator_emits_strat_keys():

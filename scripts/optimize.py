@@ -85,6 +85,7 @@ def objective(trial: optuna.Trial, cfg: DictConfig):
         augment=cfg.data.augment,
         aug_params=cfg.data.get("aug", {}),
         seed=cfg.seed,
+        dtype=cfg.data.get("dtype", "float32"),
     )
     datamodule.setup()
 

@@ -36,6 +36,7 @@ def main(cfg: DictConfig):
         persistent_workers=cfg.data.get("persistent_workers", True),
         augment=cfg.data.augment,
         aug_params=cfg.data.get("aug", {}),
+        dtype=cfg.data.get("dtype", "float32"),
     )
     datamodule.setup()
     

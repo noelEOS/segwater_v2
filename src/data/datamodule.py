@@ -42,6 +42,7 @@ class CoastalDataModule:
         augment: bool = True,
         aug_params: Optional[dict] = None,
         seed: Optional[int] = None,
+        dtype: str = "float32",
     ):
         self.root_dir = root_dir
         self.train_path = os.path.join(root_dir, train_file)
@@ -49,6 +50,11 @@ class CoastalDataModule:
         self.test_path = os.path.join(root_dir, test_file)
         self.H = H
         self.W = W
+        # On-disk storage dtype of the memmaps under root_dir. "float32" for the
+        # chip-based/pair-based datasets; "float16" for mixed80_blocked. Samples are
+        # returned as float32 either way. A wrong value raises in _compute_length
+        # (size % bytes_per_sample != 0) rather than silently misreading.
+        self.dtype = np.dtype(dtype)
         self.batch_size = batch_size
         self.val_batch_size = val_batch_size or batch_size
         self.num_workers = num_workers
@@ -74,11 +80,14 @@ class CoastalDataModule:
         aug = CoastalAug(**self.aug_params) if self.augment else None
         
         if os.path.exists(self.train_path):
-            self.train_ds = CoastalMemmapDataset(MemmapSpec(self.train_path, H=self.H, W=self.W), transforms=aug)
+            self.train_ds = CoastalMemmapDataset(
+                MemmapSpec(self.train_path, H=self.H, W=self.W, dtype=self.dtype), transforms=aug)
         if os.path.exists(self.val_path):
-            self.val_ds = CoastalMemmapDataset(MemmapSpec(self.val_path, H=self.H, W=self.W), transforms=None)
+            self.val_ds = CoastalMemmapDataset(
+                MemmapSpec(self.val_path, H=self.H, W=self.W, dtype=self.dtype), transforms=None)
         if os.path.exists(self.test_path):
-            self.test_ds = CoastalMemmapDataset(MemmapSpec(self.test_path, H=self.H, W=self.W), transforms=None)
+            self.test_ds = CoastalMemmapDataset(
+                MemmapSpec(self.test_path, H=self.H, W=self.W, dtype=self.dtype), transforms=None)
 
     def _dl(self, dataset, batch_size, shuffle=False):
         if dataset is None:

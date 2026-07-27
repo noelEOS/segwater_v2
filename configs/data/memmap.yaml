@@ -1,6 +1,13 @@
 memmap_root: /home/jovyan/shared/noelivanulloa/globalpairs/OTHER_PROJECTS/Global_Sen12Coast/PRODUCTION_DATASET
 H: 224
 W: 224
+# On-disk storage dtype of the memmaps under memmap_root. float32 for the
+# chip-based and pair-based datasets; float16 for the mixed80_blocked lineage
+# (experiments/DATASET_mixed80_blocked_612k), which halves the bytes. Samples are
+# always returned to the model as float32, so this does not change model inputs.
+# A wrong value fails loudly at dataset construction (file size not divisible by
+# bytes-per-sample) rather than silently misreading.
+dtype: float32
 batch_size: 256
 val_batch_size: 256
 num_workers: 8

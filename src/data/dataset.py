@@ -16,6 +16,10 @@ class MemmapSpec:
     W: int = 224
     in_channels: int = 2         # VV, VH
     mask_channel_index: int = 2  # third plane holds the target
+    # On-disk storage dtype. float32 for the chip-based and pair-based memmaps;
+    # float16 for the mixed80_blocked lineage, which halves the bytes at a
+    # quantisation cost ~2 orders of magnitude below S1 speckle. Samples are
+    # always returned as float32 regardless, so models see identical inputs.
     dtype: np.dtype = np.float32
 
 class CoastalMemmapDataset(Dataset):
@@ -65,9 +69,12 @@ class CoastalMemmapDataset(Dataset):
         arr = self._mm[idx]  # (3,H,W)
         x_np = arr[: self.spec.in_channels]  # (2,H,W)
         y_np = arr[self.spec.mask_channel_index]  # (H,W)
-        
-        # Make a writable copy to avoid PyTorch warning about non-writable NumPy
-        x = torch.from_numpy(np.array(x_np, copy=True))  # float32 tensor, owns memory
+
+        # Always hand the model float32, whatever the on-disk dtype. For a float32
+        # memmap astype(copy=True) is the same writable copy as before (avoids the
+        # non-writable-NumPy warning); for float16 it also widens. The mask is cast
+        # to int64 either way -- {0,1,255} are exact in float16, so no label drift.
+        x = torch.from_numpy(x_np.astype(np.float32, copy=True))
         # keep 255 as ignore; convert to long without copying where possible
         y = torch.from_numpy(y_np.astype(np.int64, copy=False))
         

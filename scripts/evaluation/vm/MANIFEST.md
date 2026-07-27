@@ -177,6 +177,13 @@ its `find -type d` does not follow symlinks, so a staging dir of symlinks finds
 nothing. Loop `run_sds_from_rasters.py` over an explicit glob instead — pattern
 in the runbook.
 
-⚠️ Site traps: TRUCVERT needs `--no-min-chainage-length` (else empty), DUCK
-needs `--keep-top-k 999` (else whole-run fail). Full detail, including the
+⚠️ Site traps: **TRUCVERT and TORREYPINES** both need
+`--no-min-chainage-length` (Trucvert → empty transect set; Torreypines →
+`No matched points` at every threshold, after shorelines extract fine). DUCK
+needs `--keep-top-k 999` (else whole-run fail). NARRABEEN needs nothing.
+
+General rule behind the min-chainage flag: it drops transects with fewer than
+**30 timesteps**, so **any site with under ~30 staged scenes trips it** —
+Torreypines has 25. Check the scene count before assuming a site is flag-free.
+Full detail, including the
 verified Narrabeen sanity numbers, is in the runbook.

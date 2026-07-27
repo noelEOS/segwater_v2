@@ -1,0 +1,17 @@
+{
+  "seed": 42,
+  "ratio": 0.1,
+  "dtype": "float16",
+  "train_10pct": 61236,
+  "val_10pct": 10901,
+  "full_val": {
+    "N": 109011,
+    "P": 341,
+    "eligible": 294
+  },
+  "hpo_val": {
+    "N": 10901,
+    "P": 338,
+    "eligible": 249
+  }
+}

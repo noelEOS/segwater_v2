@@ -9,6 +9,13 @@ step. Emits one JSON line with the results.
 Usage (from repo root, PYTHONPATH=.):
   python scripts/benchmark_perf_flags.py --encoder tu-swin_base_patch4_window7_224 \
       --cell base --memmap-root /mnt/local_ssd/dataset
+
+Mixed-forward ConvNeXtV2-Small compiled benchmark (runtime only; Small has no
+pretrained timm weights):
+  python scripts/benchmark_perf_flags.py --encoder tu-convnextv2_small \
+      --encoder-weights none --cell all \
+      --memmap-root /mnt/local_ssd/dataset_mixed80 --dtype float16 \
+      --warmup 25 --steps 150
 """
 
 import argparse
@@ -34,6 +41,10 @@ CELLS = {
 }
 
 
+def optional_weights(value: str):
+    return None if value.lower() in {"none", "null"} else value
+
+
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--encoder", required=True)
@@ -42,9 +53,20 @@ def main():
     ap.add_argument("--memmap-root", required=True)
     ap.add_argument("--batch-size", type=int, default=256)
     ap.add_argument("--num-workers", type=int, default=8)
+    ap.add_argument(
+        "--dtype",
+        default="float32",
+        choices=("float16", "float32"),
+        help="On-disk memmap dtype (mixed80_blocked uses float16).",
+    )
     ap.add_argument("--warmup", type=int, default=25)
     ap.add_argument("--steps", type=int, default=60)
-    ap.add_argument("--encoder-weights", default="imagenet")
+    ap.add_argument(
+        "--encoder-weights",
+        default="imagenet",
+        type=optional_weights,
+        help='Pretrained weight key, or "none"/"null" for random initialization.',
+    )
     # Concurrency measurement: all N processes finish warmup, rendezvous at the
     # barrier, and only then start their timed windows; each finisher keeps
     # running untimed "linger" steps until every process has finished timing,
@@ -71,6 +93,7 @@ def main():
         val_batch_size=args.batch_size,
         num_workers=args.num_workers,
         augment=False,
+        dtype=args.dtype,
     )
     dm.setup()
     dl = dm.train_dataloader()
@@ -157,6 +180,8 @@ def main():
         "mps": bool(os.environ.get("CUDA_MPS_PIPE_DIRECTORY")),
         **{k: v for k, v in perf_cfg.items() if k != "compile_mode"},
         "batch_size": args.batch_size,
+        "memmap_dtype": args.dtype,
+        "encoder_weights": args.encoder_weights,
         "steps_timed": args.steps,
         "compute_ms_median": round(statistics.median(compute_ms), 1),
         "compute_ms_mean": round(statistics.mean(compute_ms), 1),

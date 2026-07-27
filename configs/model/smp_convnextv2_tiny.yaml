@@ -1,0 +1,16 @@
+# ConvNeXtV2-Tiny + UPerNet.
+#
+# ConvNeXtV2 has no pretrained Small checkpoint in timm 1.0.27. Tiny is the
+# nearest smaller ConvNeXtV2 variant that retains the existing experiment's
+# ImageNet-pretrained initialization convention.
+#
+# Exact SMP universal-timm encoder name: tu-convnextv2_tiny
+# Select with: model=smp_convnextv2_tiny
+arch: upernet
+encoder_name: tu-convnextv2_tiny
+dice_weight: 0.5
+ce_weight: 0.5
+label_smoothing: 0.05
+num_classes: 2
+in_channels: 2
+encoder_weights: imagenet

@@ -1,0 +1,19 @@
+# ConvNeXtV2-Small + UPerNet.
+#
+# Exact SMP universal-timm encoder name: tu-convnextv2_small
+# Verified with segmentation-models-pytorch 0.5.0 / timm 1.0.27.
+#
+# IMPORTANT: timm exposes the Small architecture but has NO pretrained weights
+# for it. encoder_weights must therefore remain null; setting it to "imagenet"
+# fails loudly. This makes Small a random-initialization experiment and is not
+# directly comparable to the ImageNet-pretrained model pool.
+#
+# Select with: model=smp_convnextv2_small
+arch: upernet
+encoder_name: tu-convnextv2_small
+dice_weight: 0.5
+ce_weight: 0.5
+label_smoothing: 0.05
+num_classes: 2
+in_channels: 2
+encoder_weights: null

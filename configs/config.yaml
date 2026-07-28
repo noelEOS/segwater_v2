@@ -32,6 +32,9 @@ hpo:
   scheduler_total_steps: 23930     # fixed for every trial, including pruned ones
   warmup_steps: 500
   val_check_interval: 4786         # report every 2 epochs
+  # HPO constructs workers after CUDA initialization; spawn prevents workers
+  # from inheriting the parent's CUDA context through Linux fork.
+  dataloader_multiprocessing_context: spawn
 
 # Rungs: 4,786 / 9,572 / 19,144 steps = 2 / 4 / 8 epochs. With 16 trials and
 # reduction_factor=2 this targets ~16 -> 8 -> 4 -> 2 trials; survivors finish

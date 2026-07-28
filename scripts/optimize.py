@@ -91,6 +91,12 @@ def objective(trial: optuna.Trial, cfg: DictConfig):
         aug_params=cfg.data.get("aug", {}),
         seed=cfg.seed,
         dtype=cfg.data.get("dtype", "float32"),
+        # CUDA has already been initialized by this point. Linux's default
+        # "fork" would copy that state into every worker, which can later abort
+        # with c10::AcceleratorError. Spawn starts clean worker interpreters.
+        multiprocessing_context=cfg.get("hpo", {}).get(
+            "dataloader_multiprocessing_context", "spawn"
+        ),
     )
     datamodule.setup()
 

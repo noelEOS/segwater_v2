@@ -37,10 +37,10 @@ def objective(trial: optuna.Trial, cfg: DictConfig):
 
     # Suggest hyperparameters
     #arch = trial.suggest_categorical("arch", ["unet", "upernet", "segformer"])
-    base_lr = trial.suggest_float("base_learning_rate", 1e-5, 1e-2, log=True)
-    weight_decay = trial.suggest_float("weight_decay", 1e-5, 1e-1, log=True)
+    base_lr = trial.suggest_float("base_learning_rate", 3e-5, 1e-3, log=True)
+    weight_decay = trial.suggest_float("weight_decay", 1e-7, 1e-1, log=True)
     label_smoothing = trial.suggest_float("label_smoothing", 0.0, 0.2)
-    dice_weight = trial.suggest_float("dice_weight", 0.0, 1.0)
+    dice_weight = trial.suggest_float("dice_weight", 0.0, 0.5)
     
     #cfg.model.arch = arch
     cfg.trainer.base_learning_rate = base_lr

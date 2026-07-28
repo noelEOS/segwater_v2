@@ -43,6 +43,7 @@ class CoastalDataModule:
         aug_params: Optional[dict] = None,
         seed: Optional[int] = None,
         dtype: str = "float32",
+        multiprocessing_context: Optional[str] = None,
     ):
         self.root_dir = root_dir
         self.train_path = os.path.join(root_dir, train_file)
@@ -60,6 +61,10 @@ class CoastalDataModule:
         self.num_workers = num_workers
         self.pin_memory = pin_memory
         self.persistent_workers = persistent_workers and (num_workers > 0)
+        # Explicit "spawn" is used by optimize.py so HPO workers start in clean
+        # interpreters rather than inheriting the parent's initialized CUDA
+        # context through Linux fork. None preserves all non-HPO call sites.
+        self.multiprocessing_context = multiprocessing_context
         self.augment = augment
         # Seed for the TRAIN loader's shuffle generator + worker RNGs. None keeps
         # loader construction identical to the pre-seeding behaviour (train.py).
@@ -101,6 +106,8 @@ class CoastalDataModule:
         )
         if self.num_workers > 0:
             kwargs["prefetch_factor"] = 2
+            if self.multiprocessing_context is not None:
+                kwargs["multiprocessing_context"] = self.multiprocessing_context
 
         # Seed only the shuffling (train) loader: a fixed generator makes the
         # shuffle order reproducible and worker_init_fn pins per-worker RNGs.

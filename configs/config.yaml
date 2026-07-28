@@ -13,6 +13,12 @@ n_trials: 60
 # With val checks at 400/800/1200, 800 is the earliest post-warmup rung.
 pruner_min_resource: 800
 
+# HPO dataloader workers. Trials build their loaders after CUDA is
+# initialised; Linux fork would copy that context into every worker, which
+# can later abort with c10::AcceleratorError. spawn starts clean interpreters.
+hpo:
+  dataloader_multiprocessing_context: spawn
+
 # Database Storage (Resolves from .env, defaults to empty string)
 optuna_storage: ${oc.env:NEON_DB_URL, ''}
 

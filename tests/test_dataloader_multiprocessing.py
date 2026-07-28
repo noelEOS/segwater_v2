@@ -17,6 +17,12 @@ def _write_memmap(path, *, n=4, h=2, w=2):
 
 def test_spawn_worker_reads_fp16_memmap_and_tears_down(tmp_path):
     _write_memmap(tmp_path / "train.memmap")
+    # Reproduce optimize.py's ordering on CUDA hosts: the parent initializes
+    # CUDA before DataLoader workers start. A forked worker would inherit that
+    # runtime state; a spawned worker starts clean.
+    if torch.cuda.is_available():
+        torch.empty(1, device="cuda")
+
     datamodule = CoastalDataModule(
         root_dir=str(tmp_path),
         H=2,

@@ -1,4 +1,9 @@
-import glob, os
+import glob, os, sys
+from pathlib import Path
+
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+from runsel import resolve_run_dir
+
 RUNS = os.path.expanduser("~/segwater_v2/outputs/inference/runs")
 # arch dir-token -> evaluator model key (matches chip-trained eval keys)
 ARCH = [
@@ -10,10 +15,11 @@ ARCH = [
 for seed in ["s19", "s42", "s58"]:
     runs = {}
     for token, key in ARCH:
-        pat = os.path.join(RUNS, f"dev_sweep_concurrent_demak_{seed}_*_{token}_native224_weighted_224_b0_s32")
-        hits = sorted(glob.glob(pat))
-        assert len(hits) == 1, f"{seed} {token}: {hits}"
-        runs[key] = hits[0]
+        # `suffix` keeps unet_resnet50 from matching unetplusplus_resnet50;
+        # the anchored name keeps a longer sweep name from being absorbed.
+        runs[key] = str(resolve_run_dir(
+            RUNS, f"dev_sweep_concurrent_demak_{seed}",
+            suffix=f"_{token}_native224_weighted_224_b0_s32"))
     lines = []
     lines.append(f"# Pair-based rest-4 archs, seed {seed}, stride 32.")
     lines.append(f"# Mirrors ~/aucroc_{seed}_vm.yaml; only model_runs and run_name differ.")

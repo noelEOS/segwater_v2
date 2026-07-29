@@ -12,6 +12,8 @@ Goal: an agent bringing up a VM to evaluate one site/model should only need to
 | File | What |
 |---|---|
 | `score_pairbased_hampyeong.py` | ONE config-driven Hampyeong scorer, `--spec <yaml>`. Replaces the 3 hand-forked VM scorers. |
+| `runsel.py` | **load-bearing — copy with the kit.** Unambiguous run-dir resolution: a bare prefix glob matches longer siblings (`demak_full_mx630k_*` also matches `…_mx630k_best_…`), so every lookup anchors on the `_<UTC stamp>_` the sweep always emits. Stdlib-only, no editable install needed. Tests: `tests/test_runsel.py`. |
+| `analysis/` | area builders, trend fitters and comparison tools — see `analysis/README.md`. |
 | `specs/hampyeong_{swin,rest4,savelast}.yaml` | the three scoring targets as data. Proven byte-identical to the original forks (2026-07-25). |
 | `specs/hampyeong_gate.yaml` | 9-entry spec (3 seeds × best/last/SWA-5) for the 2026-07-25 checkpoint-selection gate. |
 | `score_hampyeong_legacy.py` | separate job: scores the 2 legacy Sen1Coast rasters + Table-2 repro check. |

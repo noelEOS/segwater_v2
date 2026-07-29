@@ -7,6 +7,9 @@ expected arm is missing or ambiguous rather than silently scoring 8 of 9.
 from pathlib import Path
 import sys
 
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
+from runsel import resolve_run_dirs  # noqa: E402
+
 RUNS = Path("/home/noel/segwater_v2/outputs/inference/runs")
 OUT = Path("/home/noel/configs/aucroc_gate")
 SEEDS = ["s19", "s42", "s58"]
@@ -63,10 +66,13 @@ def main() -> None:
     written, problems = [], []
     for seed in SEEDS:
         for arm in ARMS:
-            hits = sorted(RUNS.glob("gate_%s_demak_%s_*" % (arm, seed)))
-            hits = [h for h in hits if h.is_dir()]
+            # Anchored on the UTC stamp: a bare prefix glob would also match a
+            # sweep whose name extends this one (e.g. an `..._s42_PERF` re-run).
+            hits = resolve_run_dirs(RUNS, "gate_%s_demak_%s" % (arm, seed))
             if len(hits) != 1:
-                problems.append("%s/%s: %d run dirs" % (seed, arm, len(hits)))
+                problems.append("%s/%s: %d run dirs%s" % (
+                    seed, arm, len(hits),
+                    "".join("\n      " + h.name for h in hits)))
                 continue
             run_dir = hits[0]
             n_tif = len(list(run_dir.glob("*/*_probability_water.tif")))

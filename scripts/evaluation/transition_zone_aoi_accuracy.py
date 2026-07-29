@@ -52,6 +52,8 @@ sys.path.insert(0, str(REPO / "scripts"))
 import geopandas as gpd  # noqa: E402
 
 from evaluation.metrics import compute_binary_metrics  # noqa: E402
+from evaluation.runsel import RunDirError  # noqa: E402
+from evaluation.runsel import resolve_run_dir as _resolve_run_dir  # noqa: E402
 from inference_overlap_utils import (  # noqa: E402
     intersection_bounds,
     read_profile,
@@ -104,11 +106,18 @@ def utc_now() -> str:
 
 
 def resolve_run_dir(seed: str, model_token: str) -> Path:
-    pattern = f"*_demak_{seed}_*_{model_token}_native224_weighted_224_b0_{STRIDE}"
-    matches = sorted(RUNS.glob(pattern))
-    if len(matches) != 1:
-        raise SystemExit(f"Expected exactly 1 run dir for {seed}/{model_token}, found {len(matches)}: {matches}")
-    return matches[0]
+    """Exactly one run dir for (seed, model token) at the module stride.
+
+    The sweep name is fully known (`dev_sweep_all_demak_<seed>`), so anchor on
+    it rather than a leading `*`: the anchored form additionally requires the
+    UTC stamp, which stops a longer sweep name from being absorbed. `suffix`
+    pins the arch token so `unet_resnet50` cannot match `unetplusplus_resnet50`.
+    """
+    suffix = f"_{model_token}_native224_weighted_224_b0_{STRIDE}"
+    try:
+        return _resolve_run_dir(RUNS, f"dev_sweep_all_demak_{seed}", suffix=suffix)
+    except RunDirError as exc:
+        raise SystemExit(str(exc)) from exc
 
 
 def load_aoi_geoms(aoi_path: Path, target_crs: str):

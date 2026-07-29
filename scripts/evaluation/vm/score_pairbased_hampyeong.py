@@ -41,7 +41,11 @@ Spec schema (YAML) — see specs/ for the three canonical instances:
         seed:       19|42|58
         variant:    optional string (only with variant_column)
         run_dir:    EITHER an explicit path relative to pair_root
-                    OR a `glob:` pattern relative to pair_root (must match 1)
+                    OR a `glob:` pattern relative to pair_root (must match 1).
+                    `glob:` is AUTO-ANCHORED: the first `*` must begin with the
+                    UTC timestamp (`\\d{8}T\\d{6}Z`) that every sweep emits, so
+                    a longer sibling run name cannot be absorbed. To pin one
+                    exact run instead, give the explicit dir name.
         checkpoint: expected checkpoint path relative to repo
         lineage_slug:  optional per-entry override of the file-wide value
         training_data: optional per-entry override of the file-wide value
@@ -59,6 +63,9 @@ from pathlib import Path
 import numpy as np
 import pandas as pd
 import yaml
+
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+from runsel import RunDirError, resolve_glob_spec
 
 DATES = ["20210305", "20210422", "20210621"]
 SCENE_IDS = {
@@ -93,12 +100,24 @@ def load_spec(spec_path: Path) -> dict:
 def resolve_run_dir(pair_root: Path, run_dir: str) -> str:
     """Return run_dir relative to pair_root. Accepts an explicit path or a
     `glob:<pattern>` that must match exactly one dir (keeps the resolved
-    timestamped dir name, so provenance is preserved in the output/logs)."""
+    timestamped dir name, so provenance is preserved in the output/logs).
+
+    `glob:` patterns are AUTO-ANCHORED: the first `*` must begin with the UTC
+    timestamp the sweep always emits, so a run whose name merely extends this
+    one (`…_last` vs `…_last_PERF`) can no longer be absorbed. This is a
+    tightening only -- it can reject a dir that violates the naming contract,
+    never one that satisfies it. See runsel.resolve_glob_spec.
+    """
     if run_dir.startswith("glob:"):
         pattern = run_dir[len("glob:"):]
-        hits = sorted(glob.glob(str(pair_root / pattern)))
-        assert len(hits) == 1, f"glob {pattern!r}: expected 1 run dir, got {hits!r}"
-        return str(Path(hits[0]).relative_to(pair_root))
+        hits = resolve_glob_spec(pair_root, pattern)
+        if len(hits) != 1:
+            raise RunDirError(
+                "glob %r: expected 1 run dir under %s, got %d\n%s"
+                % (pattern, pair_root, len(hits),
+                   "\n".join("  " + h.name for h in hits) or "  (none)")
+            )
+        return str(hits[0].relative_to(pair_root))
     return run_dir
 
 

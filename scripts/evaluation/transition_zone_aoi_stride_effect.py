@@ -40,6 +40,8 @@ sys.path.insert(0, str(REPO / "scripts"))
 sys.path.insert(0, str(REPO / "scripts" / "evaluation"))
 
 from evaluation.metrics import compute_binary_metrics  # noqa: E402
+from evaluation.runsel import RunDirError  # noqa: E402
+from evaluation.runsel import resolve_run_dir as _resolve_run_dir  # noqa: E402
 from inference_overlap_utils import threshold_probability  # noqa: E402
 from transition_zone_aoi_accuracy import (  # noqa: E402
     BLOCK_PX,
@@ -64,10 +66,17 @@ STRIDES = ["s8", "s32"]
 
 
 def resolve_run_dir(seed: str, token: str, stride: str) -> Path:
-    matches = sorted(RUNS.glob(f"*_demak_{seed}_*_{token}_native224_weighted_224_b0_{stride}"))
-    if len(matches) != 1:
-        raise SystemExit(f"Expected 1 run dir for {seed}/{token}/{stride}, found {len(matches)}: {matches}")
-    return matches[0]
+    """Exactly one run dir for (seed, token, stride).
+
+    Anchored on the known sweep name + UTC stamp rather than a leading `*`, so
+    a longer sweep name cannot be absorbed; `suffix` pins the arch token and
+    stride (`unet_resnet50` vs `unetplusplus_resnet50`).
+    """
+    suffix = f"_{token}_native224_weighted_224_b0_{stride}"
+    try:
+        return _resolve_run_dir(RUNS, f"dev_sweep_all_demak_{seed}", suffix=suffix)
+    except RunDirError as exc:
+        raise SystemExit(str(exc)) from exc
 
 
 def main() -> None:

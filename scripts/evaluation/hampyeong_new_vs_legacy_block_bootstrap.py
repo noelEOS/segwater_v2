@@ -35,6 +35,7 @@ if str(_SCRIPTS) not in sys.path:
     sys.path.insert(0, str(_SCRIPTS))
 
 from evaluation.hampyeong_model_comparison import gt_path, valid_mask_path, EXPECTED_VALID_PIXELS  # noqa: E402
+from evaluation.runsel import resolve_run_dirs  # noqa: E402
 
 DEFAULT_NAS_ROOT = "/Volumes/WD_8tb_RedPlus_NAS_A/MACKBOOK_AIR_M2_BACKUP/Documents/EOS/ACDC"
 DEFAULT_RUNS_ROOT = "experiments/hampyeong/runs"
@@ -76,12 +77,18 @@ MODELS = ["Swin-B", "Swin-Large", "ConvNeXtV2", "DPT-ViT-B", "SegFormer-B4",
 
 
 def _resolve_run_dir(runs_root: Path, model: str, seed: int) -> Path:
-    """Newest run dir for (arch, seed). unet_resnet50 must not match unetplusplus_resnet50."""
+    """Newest run dir for (arch, seed). unet_resnet50 must not match unetplusplus_resnet50.
+
+    Taking the NEWEST is deliberate here (see the ARCH_TOKEN note above): a
+    re-inference that replaces a run dir is picked up with no code change. What
+    is *not* deliberate is matching a sweep whose name merely extends this one,
+    so the candidate list is front-anchored on the UTC stamp via runsel; the
+    `suffix` keeps the arch token exact.
+    """
     token = ARCH_TOKEN[model]
-    prefix = f"dev_sweep_all_hampyeong_s{seed}_"
     suffix = f"_{token}_native224_weighted_224_b0_s32"
-    matches = sorted(p for p in runs_root.glob(f"{prefix}*{suffix}")
-                     if p.is_dir() and p.name.startswith(prefix) and p.name.endswith(suffix))
+    matches = resolve_run_dirs(runs_root, f"dev_sweep_all_hampyeong_s{seed}",
+                               suffix=suffix)
     if not matches:
         raise FileNotFoundError(f"no run dir for {model} (token {token}) seed {seed} under {runs_root}")
     # sort key = the ...T######Z timestamp between prefix and token; lexicographic works

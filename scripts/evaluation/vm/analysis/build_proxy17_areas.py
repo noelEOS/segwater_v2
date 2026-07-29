@@ -13,6 +13,9 @@ from pathlib import Path
 import numpy as np, pandas as pd, rasterio, yaml
 from rasterio.windows import from_bounds
 
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
+from runsel import resolve_run_dir
+
 RUNS = Path.home() / "segwater_v2/outputs/inference/runs"
 LAND_MASK_TIF = Path.home() / "ancillary/demak_semarang/aoi/GSHHG_mask.tif"
 OUT = Path.home() / "demak_proxy17_water_area_timeseries.csv"
@@ -46,9 +49,7 @@ def load_aoi(sample_tif):
 
 
 def find_run(aug, arm):
-    hits = [d for d in sorted(RUNS.glob("demak_proxy17_%s_%s_*" % (aug, arm))) if d.is_dir()]
-    assert len(hits) == 1, "%s/%s: %d run dirs" % (aug, arm, len(hits))
-    return hits[0]
+    return resolve_run_dir(RUNS, "demak_proxy17_%s_%s" % (aug, arm))
 
 
 def audit(base, aug, arm):

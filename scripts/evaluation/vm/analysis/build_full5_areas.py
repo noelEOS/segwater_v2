@@ -5,10 +5,13 @@ registered trend products. Emits one long CSV keyed by `arm` (not `seed`, since
 all three are s42) plus an `in_analysis_window` flag for the 206-scene window.
 """
 from __future__ import annotations
-import glob, os, re
+import glob, os, re, sys
 from pathlib import Path
 import numpy as np, pandas as pd, rasterio, yaml
 from rasterio.windows import from_bounds
+
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
+from runsel import resolve_run_dir
 
 RUNS = Path.home()/"segwater_v2/outputs/inference/runs"
 LAND_MASK_TIF = Path.home()/"ancillary/demak_semarang/aoi/GSHHG_mask.tif"
@@ -50,11 +53,7 @@ def load_aoi(sample_tif):
 def main():
     rows, seen = [], {}
     for arm in ARMS:
-        pat = re.compile(r"^demak_full_" + re.escape(arm) + r"_\d{8}T\d{6}Z_")
-        hits = [d for d in sorted(RUNS.glob("demak_full_%s_*" % arm))
-                if d.is_dir() and pat.match(d.name)]
-        assert len(hits) == 1, "%s: %d run dirs" % (arm, len(hits))
-        base = hits[0]
+        base = resolve_run_dir(RUNS, "demak_full_%s" % arm)
         cfg = yaml.safe_load((base/"run_config.yaml").read_text())
         ck = cfg["inference"]["checkpoint_path"]
         enc = cfg["model"]["encoder_name"]

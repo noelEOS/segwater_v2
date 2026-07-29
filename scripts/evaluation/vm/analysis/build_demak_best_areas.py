@@ -10,10 +10,13 @@ Emits one long CSV over all three seeds. The 206-scene analysis window
 an `in_analysis_window` column marks it so both views stay available.
 """
 from __future__ import annotations
-import glob, os, re
+import glob, os, re, sys
 from pathlib import Path
 import numpy as np, pandas as pd, rasterio, yaml
 from rasterio.windows import from_bounds
+
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
+from runsel import resolve_run_dir
 
 RUNS = Path.home()/"segwater_v2/outputs/inference/runs"
 LAND_MASK_TIF = Path.home()/"ancillary/demak_semarang/aoi/GSHHG_mask.tif"
@@ -49,9 +52,7 @@ def load_aoi(sample_tif):
 
 
 def find_run(seed):
-    hits = [d for d in sorted(RUNS.glob("demak_full_%snoaug_best_*" % seed)) if d.is_dir()]
-    assert len(hits) == 1, "%s: %d run dirs" % (seed, len(hits))
-    return hits[0]
+    return resolve_run_dir(RUNS, "demak_full_%snoaug_best" % seed)
 
 
 def audit(base, seed):

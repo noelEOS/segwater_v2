@@ -21,7 +21,7 @@ entries:
      run_dir: "glob:runs/hampyeong_mx630s2_s42_swa5_*_upernet_swin_base_224_mx630s2_swa5_native224_weighted_224_b0_s32",
      checkpoint: outputs/mx630_stage2/s42/upernet_tu-swin_base_patch4_window7_224_s42_swa5_step19200-23930.pth}
   - {label: ConvNeXtV2-T, slug: cnxv2t, seed: 42, variant: last, lineage_slug: mx630k, training_data: mx630,
-     run_dir: "glob:runs/hampyeong_mx630k_s42_last_*_s32",
+     run_dir: "glob:runs/hampyeong_mx630k_s42_last_*_upernet_convnextv2_tiny_mx630k_last_native224_weighted_224_b0_s32",
      checkpoint: outputs/mx630_sha_hpo/upernet_tu-convnextv2_tiny/01-46-52_s42/hpo_checkpoints/trial_00006/upernet_tu-convnextv2_tiny_s42_step23930_last.pth}
   - {label: ConvNeXtV2-T, slug: cnxv2t, seed: 42, variant: best, lineage_slug: mx630k, training_data: mx630,
      run_dir: "glob:runs/hampyeong_mx630k_s42_best_*_upernet_convnextv2_tiny_mx630k_best_native224_weighted_224_b0_s32",

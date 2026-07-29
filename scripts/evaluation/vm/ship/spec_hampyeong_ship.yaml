@@ -1,0 +1,33 @@
+# Hampyeong — mx630_stage2 SHIP decision, 6 arms (3 seeds x best/last).
+# All bf16 + TF32 + device-stitch. Swin-B throughout.
+# `slug` names the ARCHITECTURE; lineage_slug/training_data carry the dataset
+# lineage, so `model` reads swinb_s<NN>_mx630s2_<variant> and is legible alone.
+# The scorer's checkpoint-provenance audit + prediction-digest distinctness are
+# what protect this table against two arms silently being the same weights.
+repo: /home/noel/segwater_v2
+nas_root: /home/noel/ancillary/hampyeong/nas_root
+pair_root: outputs/inference
+expected_valid_pixels: 1179967
+variant_column: true
+output: /home/noel/workspace/results/ship_decision_2026-07/hampyeong/hampyeong_ship_per_date_metrics.csv
+
+entries:
+  - {label: Swin-B, slug: swinb, seed: 19, variant: best, lineage_slug: mx630s2, training_data: mx630,
+     run_dir: "glob:runs/hampyeong_ship_s19_best_*_mx630s2_s19_best_native224_weighted_224_b0_s32",
+     checkpoint: outputs/mx630_stage2/s19/upernet_tu-swin_base_patch4_window7_224_s19_step20400_pmwiou0.891914.pth}
+  - {label: Swin-B, slug: swinb, seed: 19, variant: last, lineage_slug: mx630s2, training_data: mx630,
+     run_dir: "glob:runs/hampyeong_ship_s19_last_*_mx630s2_s19_last_native224_weighted_224_b0_s32",
+     checkpoint: outputs/mx630_stage2/s19/upernet_tu-swin_base_patch4_window7_224_s19_step23930_last.pth}
+  - {label: Swin-B, slug: swinb, seed: 42, variant: best, lineage_slug: mx630s2, training_data: mx630,
+     run_dir: "glob:runs/hampyeong_ship_s42_best_*_mx630s2_s42_best_native224_weighted_224_b0_s32",
+     checkpoint: outputs/mx630_stage2/s42/upernet_tu-swin_base_patch4_window7_224_s42_step12000_pmwiou0.890812.pth}
+  - {label: Swin-B, slug: swinb, seed: 42, variant: last, lineage_slug: mx630s2, training_data: mx630,
+     run_dir: "glob:runs/hampyeong_ship_s42_last_*_mx630s2_s42_last_native224_weighted_224_b0_s32",
+     checkpoint: outputs/mx630_stage2/s42/upernet_tu-swin_base_patch4_window7_224_s42_step23930_last.pth}
+  - {label: Swin-B, slug: swinb, seed: 58, variant: best, lineage_slug: mx630s2, training_data: mx630,
+     run_dir: "glob:runs/hampyeong_ship_s58_best_*_mx630s2_s58_best_native224_weighted_224_b0_s32",
+     checkpoint: outputs/mx630_stage2/s58/upernet_tu-swin_base_patch4_window7_224_s58_step13200_pmwiou0.890623.pth}
+  - {label: Swin-B, slug: swinb, seed: 58, variant: last, lineage_slug: mx630s2, training_data: mx630,
+     run_dir: "glob:runs/hampyeong_ship_s58_last_*_mx630s2_s58_last_native224_weighted_224_b0_s32",
+     checkpoint: outputs/mx630_stage2/s58/upernet_tu-swin_base_patch4_window7_224_s58_step23930_last.pth}
+

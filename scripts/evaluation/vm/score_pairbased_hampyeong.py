@@ -27,15 +27,24 @@ Spec schema (YAML) — see specs/ for the three canonical instances:
     pair_root:   run root, relative to repo (default outputs/inference)
     expected_valid_pixels: int
     variant_column: bool         # emit a `variant` column (savelast A/B)
+    lineage_slug: str            # dataset/training lineage in the `model` column
+                                 # (default "pairbased" -- MUST be set for any
+                                 #  other lineage, e.g. "mx630s2", "mx630k")
+    training_data: str           # `training_data` column (default "pair-based")
     output: abs path for the CSV (refuses to clobber)
     entries:                     # one row-source per arch/seed/variant
       - label:      human arch label, e.g. Swin-B
-        slug:       model-slug used in the `model` column
+        slug:       model-slug used in the `model` column. MUST name the
+                    architecture under test (e.g. `swinb`, `cnxv2t`) -- the
+                    `model` column is often read on its own, and two arms of
+                    different architectures can share a checkpoint FILENAME.
         seed:       19|42|58
         variant:    optional string (only with variant_column)
         run_dir:    EITHER an explicit path relative to pair_root
                     OR a `glob:` pattern relative to pair_root (must match 1)
         checkpoint: expected checkpoint path relative to repo
+        lineage_slug:  optional per-entry override of the file-wide value
+        training_data: optional per-entry override of the file-wide value
 """
 
 from __future__ import annotations
@@ -65,6 +74,13 @@ def load_spec(spec_path: Path) -> dict:
     spec.setdefault("nas_root", "/home/noel/ancillary/hampyeong/nas_root")
     spec.setdefault("pair_root", "outputs/inference")
     spec.setdefault("variant_column", False)
+    # Lineage tags. These default to the pair-based values so pre-existing specs
+    # keep producing byte-identical output, but ANY non-pair-based spec must set
+    # them -- `dataset` alone is not sufficient provenance, and a wrong lineage
+    # string in the `model` column is exactly the kind of thing that later gets
+    # pooled by mistake.
+    spec.setdefault("lineage_slug", "pairbased")
+    spec.setdefault("training_data", "pair-based")
     if "expected_valid_pixels" not in spec:
         raise ValueError("spec must set expected_valid_pixels")
     if "output" not in spec:
@@ -136,6 +152,8 @@ def main() -> None:
     pair_root = repo / spec["pair_root"]
     expected_valid = int(spec["expected_valid_pixels"])
     variant_column = bool(spec["variant_column"])
+    lineage_slug = str(spec["lineage_slug"])
+    training_data = str(spec["training_data"])
     dest = Path(spec["output"])
     assert not dest.exists(), f"refusing to clobber existing {dest}"
 
@@ -174,7 +192,11 @@ def main() -> None:
             assert d not in digests, f"{date}: {tag} identical prediction to {digests[d]} -- miswiring"
             digests[d] = tag
             m = compute_binary_metrics(y_true, y_pred, include_counts=True)
-            model_name = f"{e['slug']}_s{e['seed']}_pairbased"
+            # Per-entry override: one spec may span lineages (e.g. an mx630s2
+            # Swin-B arm next to an mx630k ConvNeXtV2-T arm), so the file-wide
+            # default is not always right.
+            e_lineage = str(e.get("lineage_slug", lineage_slug))
+            model_name = f"{e['slug']}_s{e['seed']}_{e_lineage}"
             if variant_column and e.get("variant"):
                 model_name += f"_{e['variant']}"
             # Column order matches the original forks: `variant` (when present)
@@ -185,7 +207,7 @@ def main() -> None:
             row.update({
                 "model": model_name,
                 "arch": e["label"],
-                "training_data": "pair-based",
+                "training_data": str(e.get("training_data", training_data)),
                 "seed": e["seed"],
                 **{k: m[k] for k in METRIC_NAMES},
                 **{c: m[c] for c in ("tn", "fp", "fn", "tp")},

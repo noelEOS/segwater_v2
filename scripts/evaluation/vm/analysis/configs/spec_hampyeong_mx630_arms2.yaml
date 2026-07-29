@@ -1,0 +1,28 @@
+# Hampyeong — all five mx630 arms across TWO lineages and TWO architectures.
+# ⚠️ step23930_last occurs in BOTH mx630k and mx630s2 with different weights.
+#    The scorer's checkpoint + prediction-digest distinctness guards protect this.
+# Arm naming: `model` = <arch>_s<seed>_<lineage>_<variant>, so the architecture
+# under test is legible from the model column alone.
+repo: /home/noel/segwater_v2
+nas_root: /home/noel/ancillary/hampyeong/nas_root
+pair_root: outputs/inference
+expected_valid_pixels: 1179967
+variant_column: true
+output: /home/noel/hampyeong_mx630_arms2_per_date_metrics_v2.csv
+
+entries:
+  - {label: Swin-B, slug: swinb, seed: 42, variant: best, lineage_slug: mx630s2, training_data: mx630,
+     run_dir: "glob:runs/hampyeong_mx630s2_s42_best_*_upernet_swin_base_224_mx630s2_best_native224_weighted_224_b0_s32",
+     checkpoint: outputs/mx630_stage2/s42/upernet_tu-swin_base_patch4_window7_224_s42_step12000_pmwiou0.890812.pth}
+  - {label: Swin-B, slug: swinb, seed: 42, variant: last, lineage_slug: mx630s2, training_data: mx630,
+     run_dir: "glob:runs/hampyeong_mx630s2_s42_last_*_upernet_swin_base_224_mx630s2_last_native224_weighted_224_b0_s32",
+     checkpoint: outputs/mx630_stage2/s42/upernet_tu-swin_base_patch4_window7_224_s42_step23930_last.pth}
+  - {label: Swin-B, slug: swinb, seed: 42, variant: swa5, lineage_slug: mx630s2, training_data: mx630,
+     run_dir: "glob:runs/hampyeong_mx630s2_s42_swa5_*_upernet_swin_base_224_mx630s2_swa5_native224_weighted_224_b0_s32",
+     checkpoint: outputs/mx630_stage2/s42/upernet_tu-swin_base_patch4_window7_224_s42_swa5_step19200-23930.pth}
+  - {label: ConvNeXtV2-T, slug: cnxv2t, seed: 42, variant: last, lineage_slug: mx630k, training_data: mx630,
+     run_dir: "glob:runs/hampyeong_mx630k_s42_last_*_s32",
+     checkpoint: outputs/mx630_sha_hpo/upernet_tu-convnextv2_tiny/01-46-52_s42/hpo_checkpoints/trial_00006/upernet_tu-convnextv2_tiny_s42_step23930_last.pth}
+  - {label: ConvNeXtV2-T, slug: cnxv2t, seed: 42, variant: best, lineage_slug: mx630k, training_data: mx630,
+     run_dir: "glob:runs/hampyeong_mx630k_s42_best_*_upernet_convnextv2_tiny_mx630k_best_native224_weighted_224_b0_s32",
+     checkpoint: outputs/mx630_sha_hpo/upernet_tu-convnextv2_tiny/01-46-52_s42/hpo_checkpoints/trial_00006/upernet_tu-convnextv2_tiny_s42_step9572_pmwiou0.890749.pth}

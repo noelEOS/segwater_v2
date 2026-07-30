@@ -67,6 +67,20 @@ import yaml
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 from runsel import RunDirError, resolve_glob_spec
 
+
+class ProvenanceError(Exception):
+    """A provenance/consistency guard failed. Raised, never asserted: `assert`
+    is stripped under `python -O`, and these guards are the point of the scorer
+    (see the module docstring) -- they must fail loudly under every interpreter
+    flag, not silently mis-score."""
+
+
+def require(cond, msg: str) -> None:
+    """Guard helper: raise :class:`ProvenanceError` when `cond` is falsey."""
+    if not cond:
+        raise ProvenanceError(msg)
+
+
 DATES = ["20210305", "20210422", "20210621"]
 SCENE_IDS = {
     "20210305": "S1B_IW_GRDH_1SDV_20210305T213224_20210305T213249_025885_031658_6933_Clipped",
@@ -133,14 +147,14 @@ def audit(spec: dict, repo: Path, pair_root: Path) -> list[dict]:
         cfg = yaml.safe_load((base / "run_config.yaml").read_text())
         summary = json.loads((base / "run_summary.json").read_text())
         ckpt = cfg["inference"]["checkpoint_path"]
-        assert ckpt == summary["checkpoint_path"], f"{tag}: config/summary checkpoint mismatch"
-        assert ckpt == e["checkpoint"], f"{tag}: expected {e['checkpoint']}, got {ckpt}"
+        require(ckpt == summary["checkpoint_path"], f"{tag}: config/summary checkpoint mismatch")
+        require(ckpt == e["checkpoint"], f"{tag}: expected {e['checkpoint']}, got {ckpt}")
         man = pd.read_csv(base / "run_manifest.csv")
-        assert set(man["checkpoint_path"].unique()) == {ckpt}, f"{tag}: manifest disagrees"
-        assert ckpt not in seen, f"checkpoint collision: {tag} / {seen.get(ckpt)}"
+        require(set(man["checkpoint_path"].unique()) == {ckpt}, f"{tag}: manifest disagrees")
+        require(ckpt not in seen, f"checkpoint collision: {tag} / {seen.get(ckpt)}")
         seen[ckpt] = tag
-        assert cfg["inference"]["data"]["stride"] == 32, f"{tag}: stride != 32"
-        assert cfg["inference"]["post_processing"]["threshold"] == 0.5, f"{tag}: threshold != 0.5"
+        require(cfg["inference"]["data"]["stride"] == 32, f"{tag}: stride != 32")
+        require(cfg["inference"]["post_processing"]["threshold"] == 0.5, f"{tag}: threshold != 0.5")
         resolved.append({**e, "resolved_run_dir": run_dir})
     print(f"Provenance audit passed: {len(seen)} distinct checkpoints")
     for ckpt, tag in seen.items():
@@ -174,7 +188,7 @@ def main() -> None:
     lineage_slug = str(spec["lineage_slug"])
     training_data = str(spec["training_data"])
     dest = Path(spec["output"])
-    assert not dest.exists(), f"refusing to clobber existing {dest}"
+    require(not dest.exists(), f"refusing to clobber existing {dest}")
 
     entries = audit(spec, repo, pair_root)
     mask = nas / "Tide_Gauge/Korean_Peninsula/DEM_wrt_WGS84_TBM/DEM_VALID_MASK_aoi.tif"
@@ -189,7 +203,7 @@ def main() -> None:
         for e in entries:
             tag = _tag(e, variant_column)
             pred = pair_root / e["resolved_run_dir"] / scene / f"{scene}_probability_water.tif"
-            assert pred.exists(), f"missing prediction {pred}"
+            require(pred.exists(), f"missing prediction {pred}")
             y_true, y_pred, diag = load_overlap_reference_and_prediction(
                 reference_path=str(ref),
                 prediction_path=str(pred),
@@ -202,13 +216,13 @@ def main() -> None:
                 valid_mask_value=1,
             )
             n_valid = diag["valid_pixels_after_all_masks"]
-            assert n_valid == expected_valid, f"{date} {tag}: valid px {n_valid} != {expected_valid}"
+            require(n_valid == expected_valid, f"{date} {tag}: valid px {n_valid} != {expected_valid}")
             if y_true_reference is None:
                 y_true_reference = y_true
             else:
-                assert np.array_equal(y_true, y_true_reference), f"{date}: y_true differs for {tag}"
+                require(np.array_equal(y_true, y_true_reference), f"{date}: y_true differs for {tag}")
             d = hashlib.sha1(y_pred.tobytes()).hexdigest()
-            assert d not in digests, f"{date}: {tag} identical prediction to {digests[d]} -- miswiring"
+            require(d not in digests, f"{date}: {tag} identical prediction to {digests[d]} -- miswiring")
             digests[d] = tag
             m = compute_binary_metrics(y_true, y_pred, include_counts=True)
             # Per-entry override: one spec may span lineages (e.g. an mx630s2

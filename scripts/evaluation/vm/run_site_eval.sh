@@ -36,14 +36,16 @@ case "$SITE" in
     case "$MODEL" in
       swin|rest4|savelast)
         SPEC="$KIT/specs/hampyeong_${MODEL}.yaml"
-        echo "== step 2: (re)inference — check run dirs the spec resolves =="
-        if $PY "$KIT/score_pairbased_hampyeong.py" --spec "$SPEC" >/dev/null 2>&1; then
-          echo "  scorer ran clean once already? re-run below for real output"
-        fi
-        # The scorer's own audit fails if a run dir is missing; surface that as
-        # the signal to run inference. We do not auto-launch inference here for
-        # Swin-B (config caveat) — the resolved run dirs for these specs are the
-        # dev_sweep_all_/dev_sweep_rest_ outputs already on the VM.
+        echo "== step 2: (re)inference — none; the scorer resolves its own run dirs =="
+        # NO probe run here, deliberately — do not reintroduce one. A probe that
+        # SUCCEEDS writes the output CSV, so the real invocation below then dies
+        # on the scorer's "refusing to clobber existing" guard: broken exactly
+        # when everything is fine. The scorer's provenance audit already runs
+        # before any scoring and fails loudly on a missing/miswired run dir, so
+        # the single real invocation is both the check and the work.
+        # We also do not auto-launch inference for Swin-B (config caveat) — the
+        # run dirs these specs resolve are the dev_sweep_all_/dev_sweep_rest_
+        # outputs already on the VM.
         echo "== step 3: score =="
         $PY "$KIT/score_pairbased_hampyeong.py" --spec "$SPEC"
         ;;

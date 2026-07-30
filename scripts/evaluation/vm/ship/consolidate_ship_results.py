@@ -116,15 +116,30 @@ def main() -> None:
     ap.add_argument("--strict", action="store_true",
                     help="final-pass mode: exit 1 on any missing source, any "
                          "unmatched row, or an all-NaN gate_iou")
+    ap.add_argument("--tag", default="ship",
+                    help="campaign tag embedded in every source CSV's filename "
+                         "(default: %(default)s)")
+    ap.add_argument("--arch", default="swinb",
+                    help="architecture slug for the `arm` label "
+                         "(default: %(default)s)")
+    ap.add_argument("--lineage", default="mx630s2",
+                    help="training-lineage slug for the `arm` label. MUST differ "
+                         "between lineages whose checkpoint filenames collide "
+                         "(default: %(default)s)")
+    ap.add_argument("--variants", nargs="+", default=VARIANTS,
+                    choices=["best", "last", "swa5"])
     a = ap.parse_args()
     R = a.root
+    T = a.tag
+    variants = list(a.variants)
     tally = _Tally()
 
-    rows = {(s, v): {"seed": s, "variant": v, "arm": "swinb_%s_mx630s2_%s" % (s, v)}
-            for s in SEEDS for v in VARIANTS}
+    rows = {(s, v): {"seed": s, "variant": v,
+                     "arm": "%s_%s_%s_%s" % (a.arch, s, a.lineage, v)}
+            for s in SEEDS for v in variants}
 
     # --- Demak concurrent gate (the acceptance test) ------------------------
-    g = _read(R / "demak_gate/demak_gate_ship_summary.csv", "demak gate")
+    g = _read(R / ("demak_gate/demak_gate_%s_summary.csv" % T), "demak gate")
     if g is None:
         tally.missing_source("demak_gate")
     else:
@@ -140,7 +155,7 @@ def main() -> None:
                 tally.miss("demak_gate", (r["seed"], r["variant"]))
 
     # --- Hampyeong (corroboration only; cannot gate) ------------------------
-    h = _read(R / "hampyeong/hampyeong_ship_per_date_metrics.csv", "hampyeong")
+    h = _read(R / ("hampyeong/hampyeong_%s_per_date_metrics.csv" % T), "hampyeong")
     if h is None:
         tally.missing_source("hampyeong")
     else:
@@ -155,7 +170,7 @@ def main() -> None:
                 tally.miss("hampyeong", (s0, v))
 
     # --- Narrabeen SDS at thr 0.5 ------------------------------------------
-    n = _read(R / "narrabeen/sds_narrabeen_ship_msl.csv", "narrabeen sds")
+    n = _read(R / ("narrabeen/sds_narrabeen_%s_msl.csv" % T), "narrabeen sds")
     if n is None:
         tally.missing_source("narrabeen_sds")
     else:
@@ -177,7 +192,7 @@ def main() -> None:
     # --- Demak trend, both strides -----------------------------------------
     for stride in (32, 112):
         source = "trend_s%d" % stride
-        t = _read(R / ("demak_trend/demak_full_ship_trend_s%d.csv" % stride), "trend s%d" % stride)
+        t = _read(R / ("demak_trend/demak_full_%s_trend_s%d.csv" % (T, stride)), "trend s%d" % stride)
         if t is None:
             tally.missing_source(source)
             continue
@@ -191,14 +206,18 @@ def main() -> None:
             else:
                 tally.miss(source, (r["seed"], r["variant"]))
 
-    df = pd.DataFrame([rows[(s, v)] for v in VARIANTS for s in SEEDS])
-    out = R / "SHIP_DECISION_TABLE.csv"
+    df = pd.DataFrame([rows[(s, v)] for v in variants for s in SEEDS])
+    # Output names carry the tag: the default `ship` keeps the historical
+    # filenames, any other campaign gets its own so it cannot overwrite them.
+    stem = "SHIP_DECISION" if T == "ship" else "SHIP_DECISION_%s" % T.upper()
+    out = R / (stem + "_TABLE.csv")
     atomic_to_csv(df, out, index=False)
     print("\nwrote %s (%d arms)" % (out, len(df)))
     print(df.to_string(index=False))
 
     # --- per-variant 3-seed aggregates -------------------------------------
-    lines = ["# Ship decision — consolidated\n",
+    lines = ["# Ship decision — consolidated (campaign `%s`, %s / %s)\n"
+             % (T, a.arch, a.lineage),
              "Per-variant aggregates are **3-seed mean ± SD (ddof=1)** across "
              "s19/s42/s58. This is a different quantity from a per-arm HAC SE "
              "(within-arm, from one time series); the two are not "
@@ -224,8 +243,9 @@ def main() -> None:
     lines.append("\n## Trend references (context; not recomputed)\n")
     for k, (v, se) in REFERENCES.items():
         lines.append("- %s: %+.1f ± %.1f ha/yr" % (k, v, se))
-    atomic_write_text(R / "SHIP_DECISION_SUMMARY.md", "\n".join(lines) + "\n")
-    print("\nwrote %s" % (R / "SHIP_DECISION_SUMMARY.md"))
+    summary = R / (stem + "_SUMMARY.md")
+    atomic_write_text(summary, "\n".join(lines) + "\n")
+    print("\nwrote %s" % summary)
 
     tally.report()
     raise SystemExit(_exit_code(tally, df, g is not None, strict=a.strict))

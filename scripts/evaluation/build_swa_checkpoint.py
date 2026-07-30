@@ -42,6 +42,15 @@ from pathlib import Path
 
 import torch
 
+# Shared checkpoint resolution / distinctness guards -- scripts/evaluation/vm/ckptsel.py
+# is stdlib-only, so it imports here without an editable install.
+sys.path.insert(0, str(Path(__file__).resolve().parent / "vm"))
+import ckptsel  # noqa: E402
+
+# Seed dirs are named `s19` / `s42` / `s58`, or `13-37-33_s19` when the trainer
+# stamped them. Used to derive the seed token every ingredient filename must carry.
+SEED_DIR_RE = re.compile(r"(?:^|_)(s\d+)$")
+
 # Parses the step out of the trainer's snapshot naming:
 #   {arch}_{encoder}_s{seed}_step{N}_snap_miou{v:.6f}.pth
 SNAP_STEP_RE = re.compile(r"_step(\d+)_snap_")
@@ -234,13 +243,31 @@ def refresh_batchnorm(model_state_dict, args):
 # Command manifest
 # --------------------------------------------------------------------------- #
 def find_best_pth(seed_dir: Path):
+    """Plain existence check, deliberately NOT ckptsel.resolve_best.
+
+    The result only feeds the PRINTED gate-command manifest, where `None` becomes
+    a "# SKIPPED: no candidate" line. Resolving/validating the symlink here would
+    make an unrelated best.pth problem abort a build that never loads it.
+    """
     p = seed_dir / "best.pth"
     return p if p.exists() else None
 
 
 def find_last_pth(seed_dir: Path):
-    cands = sorted(seed_dir.glob("*_last.pth"))
-    return cands[-1] if cands else None
+    """The single `*_last.pth`, via ckptsel.resolve_last.
+
+    HARDENING: the old code took `sorted(...)[-1]`, so with more than one
+    `*_last.pth` in the dir it silently picked by sort order. ckptsel.resolve_last
+    RAISES on 0 or >1 and lists the candidates; 0 is mapped back to `None` here
+    because a missing `last` is a legitimate SKIP line in the printed manifest,
+    whereas an ambiguous one is a wiring error that must surface.
+    """
+    if not sorted(seed_dir.glob("*_last.pth")):
+        return None
+    try:
+        return ckptsel.resolve_last(seed_dir)
+    except ckptsel.CkptSelError as exc:
+        raise SystemExit(f"[SWA] ambiguous 'last' arm for the gate manifest: {exc}") from exc
 
 
 def best_among_late(snapshots):
@@ -443,6 +470,31 @@ def main(argv=None):
     for s, p in snaps:
         print(f"       step {s:>7}  {p.name}")
 
+    # --- pre-average guards (both catch an already-mislabeled ingredient set) ---
+    # (i) sha256 distinctness: a duplicated snapshot file (same weights under two
+    # names) silently down-weights the rest of the average, and the output is
+    # indistinguishable from a correct SWA build.
+    try:
+        ckptsel.assert_distinct_weights({p.name: p for p in paths})
+    except ckptsel.CkptSelError as exc:
+        raise SystemExit(f"[SWA] {exc}") from exc
+    # (ii) seed token: an ingredient copied in from another seed's dir passes every
+    # path check. Only checkable when the seed is derivable from the dir NAME --
+    # `--snapshots` with an arbitrary parent dir is skipped silently rather than
+    # guessed at.
+    seed_m = SEED_DIR_RE.search(seed_dir.name)
+    if seed_m:
+        seed_token = seed_m.group(1)
+        try:
+            for p in paths:
+                ckptsel.require_seed_token(p, seed_token)
+        except ckptsel.CkptSelError as exc:
+            raise SystemExit(f"[SWA] {exc}") from exc
+        print(f"[SWA] Guards OK: {len(paths)} distinct sha256, all carry _{seed_token}_.")
+    else:
+        print(f"[SWA] Guards OK: {len(paths)} distinct sha256 "
+              f"(seed-token check skipped: no s<N> in dir name {seed_dir.name!r}).")
+
     # Load and average (loaded in ascending-step order; last == highest step).
     state_dicts = []
     for _, p in snaps:
@@ -462,6 +514,12 @@ def main(argv=None):
         averaged, bn_refreshed = refresh_batchnorm(averaged, args)
 
     # Resolve output path.
+    # DOCUMENTED TENSION (unchanged on purpose): the default output lands INSIDE
+    # the training seed dir, so a derived artifact sits among the trainer's own
+    # checkpoints. Downstream selectors therefore have to exclude it explicitly
+    # (ckptsel.SWA_RE / is_best_candidate). Moving it is a behavior change that
+    # would orphan the existing SWA builds and their provenance sidecars, so it is
+    # out of scope here -- pass --out to write elsewhere.
     min_step, max_step = steps[0], steps[-1]
     if args.out is not None:
         out_path = args.out

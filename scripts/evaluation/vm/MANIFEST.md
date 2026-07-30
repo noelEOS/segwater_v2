@@ -199,7 +199,10 @@ Short version for an agent asked to do SDS on the VM:
    `sds_core.py` derives `REPO_ROOT` from its own path.
 
    ```bash
-   gcloud compute config-ssh          # refresh: the external IP changes on restart
+   # refresh: the external IP changes on restart. --project is REQUIRED — bare
+   # config-ssh refreshes whatever project gcloud is pointed at, which may be a
+   # different one that ALSO has a `gpu-rtx-hpo-west` (see RUNBOOK_INDEX.md).
+   gcloud compute config-ssh --project spring-ember-503606
    rsync -az --exclude='__pycache__' SDS_Benchmark_slim/ \
      <instance>.<zone>.<project>:~/SDS_Benchmark_slim/
    ```

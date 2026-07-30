@@ -1,18 +1,35 @@
-"""Generate the mx630_stage2 SHIP-decision config matrix (6 arms x 4 gates).
+"""Generate a SHIP-decision config matrix (3 seeds x N variants x 4 gates).
 
-Arms = 3 seeds (s19, s42, s58) x 2 checkpoint variants (best, last). Every run
-uses bf16 + TF32 + device-stitch, including s42 -- which already had fp32
-results -- so precision is uniform and the seed is the only variable.
+Arms = 3 seeds (s19, s42, s58) x checkpoint variants (default best, last). Every
+run uses bf16 + TF32 + device-stitch so precision is uniform and the seed is the
+only variable.
+
+LINEAGE IS A PARAMETER, NOT A CONSTANT
+--------------------------------------
+``--lineage-root`` (the dir holding the per-seed subdirs), ``--encoder`` and
+``--tag`` are flags. They used to be module constants pinned to Swin-B under
+``outputs/mx630_stage2/<seed>/``, which meant a second lineage could not be run
+without editing the script -- and an edited-in-place generator is exactly how two
+lineages end up sharing sweep names.
+
+Two lineages evaluated so far:
+
+* Swin-B      ``outputs/mx630_stage2``                          tag ``ship``
+* ConvNeXtV2-B ``outputs/mx630_stage2/upernet_tu-convnextv2_base`` tag ``cnxb``
+
+⚠️ Checkpoint FILENAMES collide across lineages -- ``step23930_last.pth`` exists
+in both with entirely different weights -- so the tag is the only thing keeping
+the run dirs apart. Always pass a tag not already used on the VM.
 
 NAMING (this is load-bearing, do not "tidy" it)
 -----------------------------------------------
-Sweep names are ``<gate>_ship_<seed>_<variant>[_<stride>]``.
+Sweep names are ``<gate>_<tag>_<seed>_<variant>[_<stride>]``.
 
-* The campaign tag ``ship`` sits in the MIDDLE, never appended. Appending a tag
+* The campaign tag sits in the MIDDLE, never appended. Appending a tag
   to an existing name is exactly what produced the ``..._last`` vs
   ``..._last_PERF`` collision: a bare prefix glob then matches both. With the
-  tag in the middle, every name in this campaign is disjoint from the legacy
-  ``..._mx630s2_...`` dirs.
+  tag in the middle, every name in a campaign is disjoint from the legacy
+  ``..._mx630s2_...`` dirs and from other campaigns' dirs.
 * ``best``/``last`` are equal length and neither prefixes the other; seeds are
   fixed width. So no arm name can prefix another arm name.
 * Demak-full is split into one sweep per stride so a crash in the ~23 min s32
@@ -34,7 +51,14 @@ Guards, all of which run before any GPU time is spent:
     one failure mode whose output is indistinguishable from success.
 
 Usage:
+    # Swin-B (the original campaign; these remain the defaults)
     python scripts/evaluation/vm/ship/gen_ship_configs.py [--out-root DIR]
+
+    # ConvNeXtV2-Base
+    python scripts/evaluation/vm/ship/gen_ship_configs.py \\
+        --lineage-root ~/segwater_v2/outputs/mx630_stage2/upernet_tu-convnextv2_base \\
+        --encoder tu-convnextv2_base --tag cnxb \\
+        --out-root ~/configs/ship_decision_cnxb_2026-07
 """
 
 from __future__ import annotations
@@ -55,9 +79,14 @@ from naming import NameCollisionError, require_no_prefix_collisions  # noqa: E40
 SEEDS = ["s19", "s42", "s58"]
 VARIANTS = ["best", "last"]
 ARCH = "upernet"
-ENCODER = "tu-swin_base_patch4_window7_224"
-STAGE2 = Path.home() / "segwater_v2/outputs/mx630_stage2"
 REPO = Path.home() / "segwater_v2"
+
+# Defaults reproduce the original Swin-B `ship` campaign verbatim. Override all
+# three together for another lineage -- an encoder that disagrees with the
+# lineage root would produce runs that load the wrong architecture's weights.
+DEFAULT_ENCODER = "tu-swin_base_patch4_window7_224"
+DEFAULT_LINEAGE_ROOT = REPO / "outputs/mx630_stage2"
+DEFAULT_TAG = "ship"
 
 # bf16 + TF32 + device-stitch, spliced into every gate's common_overrides.
 BF16DEV = [
@@ -129,20 +158,23 @@ GATES = {
 }
 
 HEADER = """\
-# {gate} — mx630_stage2 SHIP decision, {seed} arm "{variant}".
-# Swin-B (upernet / tu-swin_base_patch4_window7_224), canonical 2-stage on mx630.
-# bf16 + TF32 + device-stitch (uniform across ALL 6 arms of this campaign, incl.
-# s42, so precision is not confounded with seed).
-# ⚠️ Lineage tag mx630_stage2. Checkpoint FILENAMES collide across lineages
-#    (step23930_last also exists in mx630k / ConvNeXtV2-Tiny, different weights).
-#    Never pool on filename or on `dataset=` alone.
+# {gate} — SHIP decision campaign "{tag}", {seed} arm "{variant}".
+# {arch} / {encoder}, canonical 2-stage on mx630.
+# Lineage root: {lineage_root}
+# bf16 + TF32 + device-stitch (uniform across ALL arms of this campaign, so
+# precision is not confounded with seed).
+# ⚠️ Checkpoint FILENAMES collide across lineages (step23930_last exists in
+#    mx630k / ConvNeXtV2-Tiny, in mx630_stage2 / Swin-B, and in
+#    mx630_stage2/upernet_tu-convnextv2_base / ConvNeXtV2-Base — all different
+#    weights). Never pool on filename or on `dataset=` alone; carry the
+#    architecture AND the campaign tag.
 """
 
 
-def resolve_ckpt(seed: str, variant: str) -> Path:
+def resolve_ckpt(lineage_root: Path, seed: str, variant: str) -> Path:
     """Resolve one arm's checkpoint via ckptsel, keeping this script's SystemExit
     contract (every failure here is a clean refusal before any GPU time)."""
-    d = STAGE2 / seed
+    d = lineage_root / seed
     if not d.is_dir():
         raise SystemExit("missing seed dir: %s" % d)
     resolver = {"best": ckptsel.resolve_best,
@@ -169,10 +201,13 @@ def preset_block(stride: int) -> list[str]:
 
 
 def write_config(path: Path, gate: str, seed: str, variant: str,
-                 ckpt: Path, strides: list[int], sweep_name: str) -> None:
+                 ckpt: Path, strides: list[int], sweep_name: str,
+                 encoder: str, tag: str, lineage_root: Path) -> None:
     g = GATES[gate]
     rel = ckpt.relative_to(REPO)
-    lines = [HEADER.format(gate=gate.upper(), seed=seed, variant=variant), ""]
+    lines = [HEADER.format(gate=gate.upper(), seed=seed, variant=variant,
+                           tag=tag, arch=ARCH, encoder=encoder,
+                           lineage_root=lineage_root), ""]
     lines += [
         "sweep:",
         '  name: "%s"' % sweep_name,
@@ -188,11 +223,11 @@ def write_config(path: Path, gate: str, seed: str, variant: str,
     lines += [
         "",
         "  checkpoints:",
-        '    - name: "mx630s2_%s_%s"' % (seed, variant),
+        '    - name: "%s_%s_%s"' % (tag, seed, variant),
         '      checkpoint_path: "%s"' % rel,
         "      model:",
         '        arch: "%s"' % ARCH,
-        '        encoder_name: "%s"' % ENCODER,
+        '        encoder_name: "%s"' % encoder,
         "",
         "  presets:",
     ]
@@ -213,8 +248,28 @@ def main() -> None:
                     help="arms to emit (default: %(default)s). Pass a subset to "
                          "add an arm to a campaign whose other arms are already "
                          "run — regenerating them would mint new sweep names.")
+    ap.add_argument("--lineage-root", type=Path, default=DEFAULT_LINEAGE_ROOT,
+                    help="dir holding the per-seed checkpoint subdirs "
+                         "(default: %(default)s)")
+    ap.add_argument("--encoder", default=DEFAULT_ENCODER,
+                    help="timm encoder name; MUST match --lineage-root's "
+                         "architecture (default: %(default)s)")
+    ap.add_argument("--tag", default=DEFAULT_TAG,
+                    help="campaign tag, placed in the MIDDLE of every sweep "
+                         "name. Must not already be in use on the VM — it is "
+                         "the only thing separating this campaign's run dirs "
+                         "from another lineage's (default: %(default)s)")
     a = ap.parse_args()
     variants = list(a.variants)
+    lineage_root = a.lineage_root.expanduser()
+    if not lineage_root.is_dir():
+        raise SystemExit("missing lineage root: %s" % lineage_root)
+
+    print("=== LINEAGE ===")
+    print("  root    %s" % lineage_root)
+    print("  arch    %s / %s" % (ARCH, a.encoder))
+    print("  tag     %s   (sweep names: <gate>_%s_<seed>_<variant>)"
+          % (a.tag, a.tag))
 
     # --- resolve + audit every arm BEFORE writing anything --------------------
     # One dict, ONE key type ("<seed>/<variant>"). It used to be double-keyed with
@@ -224,7 +279,8 @@ def main() -> None:
     arms = {}
     for seed in SEEDS:
         for variant in variants:
-            arms["%s/%s" % (seed, variant)] = resolve_ckpt(seed, variant)
+            arms["%s/%s" % (seed, variant)] = resolve_ckpt(
+                lineage_root, seed, variant)
     try:
         digests = ckptsel.assert_distinct_weights(arms)
     except ckptsel.CkptSelError as exc:
@@ -246,14 +302,16 @@ def main() -> None:
                 ckpt = arms["%s/%s" % (seed, variant)]
                 if g["split_by_stride"]:
                     for s in g["strides"]:
-                        name = "%s_ship_%s_%s_s%d" % (gate, seed, variant, s)
+                        name = "%s_%s_%s_%s_s%d" % (gate, a.tag, seed, variant, s)
                         write_config(a.out_root / gate / (name + ".yaml"),
-                                     gate, seed, variant, ckpt, [s], name)
+                                     gate, seed, variant, ckpt, [s], name,
+                                     a.encoder, a.tag, lineage_root)
                         n += 1
                 else:
-                    name = "%s_ship_%s_%s" % (gate, seed, variant)
+                    name = "%s_%s_%s_%s" % (gate, a.tag, seed, variant)
                     write_config(a.out_root / gate / (name + ".yaml"),
-                                 gate, seed, variant, ckpt, g["strides"], name)
+                                 gate, seed, variant, ckpt, g["strides"], name,
+                                 a.encoder, a.tag, lineage_root)
                     n += 1
     print("=== WROTE %d sweep configs under %s ===" % (n, a.out_root))
 

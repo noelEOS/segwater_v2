@@ -43,24 +43,47 @@ from runsel import TIMESTAMP_PATTERN, RunDirError, resolve_run_dirs  # noqa: E40
 
 REPO = Path.home() / "segwater_v2"
 RUNS = REPO / "outputs/inference/runs"
-ENCODER = "tu-swin_base_patch4_window7_224"
 SEEDS = ["s19", "s42", "s58"]
 VARIANTS = ["best", "last"]
 
-# gate -> (sweep-name template, completion-table gate key, expected strides)
+# Defaults reproduce the original Swin-B `ship` campaign. ``--encoder`` /
+# ``--ckpt-subdir`` / ``--tag`` override them for another lineage; ``ENCODER``
+# stays exported because tests import it as the known-good value.
+ENCODER = "tu-swin_base_patch4_window7_224"
+DEFAULT_CKPT_SUBDIR = "mx630_stage2"
+DEFAULT_TAG = "ship"
+# arm-label prefix per encoder, so the manifest's `arm` column names the
+# architecture rather than hardcoding "swinb" for every lineage.
+ARM_PREFIX = {
+    "tu-swin_base_patch4_window7_224": "swinb",
+    "tu-convnextv2_base": "cnxb",
+}
+
+# gate -> (sweep-name template AFTER tag substitution, completion-table gate key,
+# expected strides)
 #
 # The scene count is NOT inlined here: ``completion.EXPECTED_SCENES`` is the one
 # source of truth for it, so a re-staged gate cannot leave this file disagreeing
 # with the pollers and the scorers. Two gates share one key on purpose --
 # ``demak_full_s112`` and ``demak_full_s32`` are the same 213-scene series run at
 # two strides.
-GATES = {
-    "demak_gate": ("demak_gate_ship_%s_%s", "demak_gate", [32]),
-    "hampyeong": ("hampyeong_ship_%s_%s", "hampyeong", [32]),
-    "narrabeen": ("narrabeen_ship_%s_%s", "narrabeen", [8, 32, 112]),
-    "demak_full_s112": ("demak_full_ship_%s_%s_s112", "demak_full", [112]),
-    "demak_full_s32": ("demak_full_ship_%s_%s_s32", "demak_full", [32]),
-}
+def gates_for_tag(tag: str) -> dict:
+    """Sweep-name templates for one campaign tag.
+
+    The tag sits in the MIDDLE of the name (``<gate>_<tag>_<seed>_<variant>``),
+    matching ``gen_ship_configs.py``. Built per call rather than as a module
+    constant so two lineages on one VM cannot read each other's run dirs.
+    """
+    return {
+        "demak_gate": ("demak_gate_%s_%%s_%%s" % tag, "demak_gate", [32]),
+        "hampyeong": ("hampyeong_%s_%%s_%%s" % tag, "hampyeong", [32]),
+        "narrabeen": ("narrabeen_%s_%%s_%%s" % tag, "narrabeen", [8, 32, 112]),
+        "demak_full_s112": ("demak_full_%s_%%s_%%s_s112" % tag, "demak_full", [112]),
+        "demak_full_s32": ("demak_full_%s_%%s_%%s_s32" % tag, "demak_full", [32]),
+    }
+
+
+GATES = gates_for_tag(DEFAULT_TAG)
 
 STRIDE_RE = re.compile(r"_b0_s(\d+)$")
 
@@ -91,12 +114,19 @@ def run_dir_stamp(run_dir_name: str) -> str:
 
 
 def check_run_dir(gate, seed, variant, run_dir_name, cfg, n_tif, strides,
-                  expected_scenes) -> list[str]:
+                  expected_scenes, encoder=ENCODER,
+                  ckpt_subdir=DEFAULT_CKPT_SUBDIR) -> list[str]:
     """Every per-run-dir provenance guard, as a pure function.
 
     Takes the parsed ``run_config.yaml`` dict plus the counts main() measured;
     touches no filesystem. Returns the problem strings (empty list = all pass),
     so each guard is unit-testable without a run dir or a VM.
+
+    ``encoder`` and ``ckpt_subdir`` default to the Swin-B lineage. ``ckpt_subdir``
+    is the path segment the checkpoint must sit under, ABOVE the seed dir --
+    ``mx630_stage2`` for Swin-B, ``mx630_stage2/upernet_tu-convnextv2_base`` for
+    ConvNeXtV2-Base. Checking it matters because checkpoint filenames collide
+    across lineages, so the path is the only thing distinguishing them.
     """
     problems: list[str] = []
     inf, mdl = cfg["inference"], cfg["model"]
@@ -109,9 +139,9 @@ def check_run_dir(gate, seed, variant, run_dir_name, cfg, n_tif, strides,
     dir_stride = int(m.group(1)) if m else -1
 
     tag = "%s/%s/%s/s%d" % (gate, seed, variant, stride)
-    check(enc == ENCODER, "%s: encoder %s" % (tag, enc), problems)
-    check("/mx630_stage2/%s/" % seed in ck,
-          "%s: ckpt not under mx630_stage2/%s: %s" % (tag, seed, ck), problems)
+    check(enc == encoder, "%s: encoder %s" % (tag, enc), problems)
+    check("/%s/%s/" % (ckpt_subdir, seed) in ck,
+          "%s: ckpt not under %s/%s: %s" % (tag, ckpt_subdir, seed, ck), problems)
     check("_%s_" % seed in Path(ck).name,
           "%s: ckpt filename lacks _%s_: %s" % (tag, seed, Path(ck).name), problems)
     if variant == "last":
@@ -140,13 +170,28 @@ def main() -> None:
     ap = argparse.ArgumentParser(description=__doc__)
     ap.add_argument("--out", type=Path,
                     default=Path.home() / "workspace/results/ship_decision_2026-07/MANIFEST.csv")
+    ap.add_argument("--tag", default=DEFAULT_TAG,
+                    help="campaign tag in the MIDDLE of every sweep name "
+                         "(default: %(default)s)")
+    ap.add_argument("--encoder", default=ENCODER,
+                    help="encoder every run_config.yaml must declare "
+                         "(default: %(default)s)")
+    ap.add_argument("--ckpt-subdir", default=DEFAULT_CKPT_SUBDIR,
+                    help="path segment above the seed dir that every checkpoint "
+                         "must sit under (default: %(default)s)")
+    ap.add_argument("--variants", nargs="+", default=VARIANTS,
+                    choices=["best", "last", "swa5"],
+                    help="arms to expect (default: %(default)s)")
     a = ap.parse_args()
+    variants = list(a.variants)
+    arm_prefix = ARM_PREFIX.get(a.encoder, a.encoder.replace("tu-", ""))
+    n_expected_arms = len(SEEDS) * len(variants)
 
     rows, problems, digests = [], [], {}
-    for gate, (tmpl, gate_key, strides) in GATES.items():
+    for gate, (tmpl, gate_key, strides) in gates_for_tag(a.tag).items():
         n_scenes = expected_scenes(gate_key)
         for seed in SEEDS:
-            for variant in VARIANTS:
+            for variant in variants:
                 name = tmpl % (seed, variant)
                 try:
                     dirs = resolve_run_dirs(RUNS, name, expect=len(strides))
@@ -164,14 +209,16 @@ def main() -> None:
                     stitch = inf.get("stitching", {}) or {}
                     n_tif = count_probability_rasters(d)
 
-                    problems.extend(check_run_dir(gate, seed, variant, d.name, cfg,
-                                                  n_tif, strides, n_scenes))
+                    problems.extend(check_run_dir(
+                        gate, seed, variant, d.name, cfg, n_tif, strides,
+                        n_scenes, encoder=a.encoder, ckpt_subdir=a.ckpt_subdir))
 
                     key = "%s/%s" % (seed, variant)
                     if key not in digests:
                         digests[key] = sha256(ckp) if ckp.exists() else "MISSING"
                     rows.append(dict(
-                        gate=gate, seed=seed, variant=variant, arm="swinb_%s_mx630s2_%s" % (seed, variant),
+                        gate=gate, seed=seed, variant=variant,
+                        arm="%s_%s_%s_%s" % (arm_prefix, seed, a.tag, variant),
                         stride=stride, run_dir=d.name, stamp=run_dir_stamp(d.name),
                         checkpoint=ck, ckpt_sha256=digests[key], encoder=enc,
                         amp_dtype=comp.get("amp_dtype"), tf32=comp.get("tf32"),
@@ -193,7 +240,11 @@ def main() -> None:
             w.writeheader()
             w.writerows(rows)
     print("wrote %s (%d run dirs)" % (a.out, len(rows)))
-    print("distinct checkpoints: %d (expect 6)" % len({v for v in digests.values()}))
+    n_distinct = len({v for v in digests.values()})
+    print("distinct checkpoints: %d (expect %d)" % (n_distinct, n_expected_arms))
+    if n_distinct != n_expected_arms:
+        problems.append("expected %d distinct checkpoints, found %d"
+                        % (n_expected_arms, n_distinct))
     if problems:
         print("\n=== %d PROBLEM(S) ===" % len(problems))
         for p in problems:

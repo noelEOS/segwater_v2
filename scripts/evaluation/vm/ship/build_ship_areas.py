@@ -33,9 +33,12 @@ SEEDS = ["s19", "s42", "s58"]
 VARIANTS = ["best", "last"]          # default arm set; --variants overrides
 ALL_VARIANTS = ["best", "last", "swa5"]
 ARMS = ["%s_%s" % (s, v) for s in SEEDS for v in VARIANTS]
-# All six arms are Swin-B mx630_stage2; the encoder guard still runs per arm so
-# a mis-wired config cannot slip a different backbone into the table.
-EXPECT_ENC = {a: "tu-swin_base_patch4_window7_224" for a in ARMS}
+# Default lineage is Swin-B mx630_stage2 (`--encoder` overrides). The encoder
+# guard runs per arm regardless, so a mis-wired config cannot slip a different
+# backbone into the table.
+DEFAULT_ENCODER = "tu-swin_base_patch4_window7_224"
+DEFAULT_TAG = "ship"
+EXPECT_ENC = {a: DEFAULT_ENCODER for a in ARMS}
 
 
 def _mpd(lat_rad):
@@ -67,20 +70,29 @@ def main():
     ap.add_argument("--variants", nargs="+", default=VARIANTS, choices=ALL_VARIANTS,
                     help="arm variants to build (default: %(default)s). Pass a "
                          "subset to add an arm without rebuilding the others.")
+    ap.add_argument("--tag", default=DEFAULT_TAG,
+                    help="campaign tag in the MIDDLE of the sweep name "
+                         "(default: %(default)s)")
+    ap.add_argument("--encoder", default=DEFAULT_ENCODER,
+                    help="encoder every run_config.yaml must declare "
+                         "(default: %(default)s)")
+    ap.add_argument("--out-dir", type=Path, default=OUT_DIR,
+                    help="results dir (default: %(default)s)")
     a = ap.parse_args()
     arms = ["%s_%s" % (sd, v) for sd in SEEDS for v in a.variants]
-    expect_enc = {x: "tu-swin_base_patch4_window7_224" for x in arms}
-    # The filename carries the arm set: a --variants subset must NOT
-    # overwrite the full-campaign CSV. Default (best+last) keeps the
-    # historical name so existing consumers are unaffected.
-    tag = "" if list(a.variants) == VARIANTS else "_" + "-".join(a.variants)
-    out = OUT_DIR/("demak_full_ship_areas%s_s%d.csv" % (tag, a.stride))
+    expect_enc = {x: a.encoder for x in arms}
+    # The filename carries the arm set AND the campaign tag: a --variants subset
+    # must NOT overwrite the full-campaign CSV, and two lineages must not
+    # overwrite each other. Default (ship + best/last) keeps the historical name
+    # so existing consumers are unaffected.
+    vtag = "" if list(a.variants) == VARIANTS else "_" + "-".join(a.variants)
+    out = a.out_dir/("demak_full_%s_areas%s_s%d.csv" % (a.tag, vtag, a.stride))
     out.parent.mkdir(parents=True, exist_ok=True)
 
     rows, seen = [], {}
     for arm in arms:
         seed, variant = arm.split("_")
-        base = resolve_run_dir(RUNS, "demak_full_ship_%s_s%d" % (arm, a.stride))
+        base = resolve_run_dir(RUNS, "demak_full_%s_%s_s%d" % (a.tag, arm, a.stride))
         cfg = yaml.safe_load((base/"run_config.yaml").read_text())
         ck = cfg["inference"]["checkpoint_path"]
         enc = cfg["model"]["encoder_name"]

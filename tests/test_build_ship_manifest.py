@@ -189,3 +189,116 @@ def test_check_run_dir_does_not_mutate_its_config():
     snapshot = copy.deepcopy(cfg)
     run(cfg)
     assert cfg == snapshot
+
+
+# --------------------------------------------------------------------------
+# Lineage parameterisation (added for the ConvNeXtV2-Base `cnxb` campaign).
+#
+# `encoder` and `ckpt_subdir` used to be module constants pinned to Swin-B under
+# `outputs/mx630_stage2/<seed>/`. A second lineage sits one level deeper
+# (`mx630_stage2/upernet_tu-convnextv2_base/<seed>/`) with an encoder of its own,
+# and -- critically -- with checkpoint FILENAMES identical to Swin-B's
+# (`step23930_last.pth` exists in both, different weights). The path is
+# therefore the only thing distinguishing them, so the subdir guard has to be
+# exact rather than a substring of a shared ancestor.
+# --------------------------------------------------------------------------
+
+CNX_ENCODER = "tu-convnextv2_base"
+CNX_SUBDIR = "mx630_stage2/upernet_tu-convnextv2_base"
+CNX_CKPT = (
+    "outputs/mx630_stage2/upernet_tu-convnextv2_base/s42/"
+    "upernet_tu-convnextv2_base_s42_step23930_last.pth"
+)
+CNX_DIR = (
+    "demak_full_cnxb_s42_last_s32_20260730T020404Z"
+    "_cnxb_s42_last_native224_weighted_224_b0_s32"
+)
+
+
+def cnx_run(cfg, **kw):
+    kw.setdefault("run_dir_name", CNX_DIR)
+    return check_run_dir(
+        kw.pop("gate", "demak_full_s32"), kw.pop("seed", "s42"),
+        kw.pop("variant", "last"), kw.pop("run_dir_name"), cfg,
+        kw.pop("n_tif", 213), list(kw.pop("strides", (32,))),
+        kw.pop("expected", 213),
+        encoder=kw.pop("encoder", CNX_ENCODER),
+        ckpt_subdir=kw.pop("ckpt_subdir", CNX_SUBDIR),
+    )
+
+
+def test_convnextv2_lineage_passes_every_guard():
+    cfg = cfg_for(ckpt=CNX_CKPT)
+    cfg["model"]["encoder_name"] = CNX_ENCODER
+    assert cnx_run(cfg) == []
+
+
+def test_defaults_still_pin_swinb():
+    """Omitting the new kwargs must reproduce the original Swin-B behaviour."""
+    swin = cfg_for()                      # Swin-B encoder + mx630_stage2/s42 path
+    assert run(swin) == []
+    # ...and the ConvNeXtV2 config must FAIL under those defaults, on both axes.
+    cnx = cfg_for(ckpt=CNX_CKPT)
+    cnx["model"]["encoder_name"] = CNX_ENCODER
+    problems = run(cnx)
+    assert any("encoder" in p for p in problems)
+    assert any("ckpt not under mx630_stage2/s42" in p for p in problems)
+
+
+def test_swinb_checkpoint_rejected_under_convnextv2_lineage():
+    """The cross-lineage confusion this guard exists for.
+
+    A Swin-B checkpoint path sits under `mx630_stage2/s42/`, which is a PREFIX
+    of the ConvNeXtV2 lineage root's ancestor -- so a sloppy substring check
+    could accept it. It must be rejected.
+    """
+    cfg = cfg_for()                       # Swin-B path AND Swin-B encoder
+    problems = cnx_run(cfg)
+    assert any("ckpt not under %s/s42" % CNX_SUBDIR in p for p in problems)
+    assert any("encoder" in p for p in problems)
+
+
+def test_identical_last_filename_across_lineages_is_distinguished_by_path():
+    """`step23930_last.pth` exists in both lineages with different weights.
+
+    Same basename, same variant, same seed -- only the directory differs. Each
+    must pass under its own lineage and fail under the other's.
+    """
+    base = "upernet_%s_s42_step23930_last.pth"
+    swin_ck = "outputs/mx630_stage2/s42/" + base % "tu-swin_base_patch4_window7_224"
+    cnx_ck = ("outputs/mx630_stage2/upernet_tu-convnextv2_base/s42/"
+              + base % "tu-convnextv2_base")
+
+    swin_cfg = cfg_for(ckpt=swin_ck)
+    cnx_cfg = cfg_for(ckpt=cnx_ck)
+    cnx_cfg["model"]["encoder_name"] = CNX_ENCODER
+
+    assert run(swin_cfg) == []            # Swin-B under Swin-B defaults
+    assert cnx_run(cnx_cfg) == []         # ConvNeXtV2 under ConvNeXtV2 kwargs
+    assert any("ckpt not under" in p for p in run(cnx_cfg))
+    assert any("ckpt not under" in p for p in cnx_run(swin_cfg))
+
+
+def test_gates_for_tag_places_tag_in_the_middle():
+    """The tag must sit between gate and seed, and no name may prefix another."""
+    from build_ship_manifest import gates_for_tag
+    from naming import require_no_prefix_collisions
+
+    g = gates_for_tag("cnxb")
+    assert g["demak_gate"][0] % ("s42", "last") == "demak_gate_cnxb_s42_last"
+    assert g["demak_full_s112"][0] % ("s42", "last") == "demak_full_cnxb_s42_last_s112"
+    # Scene-count keys must be inherited from completion.py, not re-inlined.
+    assert g["narrabeen"][1] == "narrabeen"
+    assert g["demak_full_s112"][1] == g["demak_full_s32"][1] == "demak_full"
+
+    names = [tmpl % (s, v)
+             for tmpl, _, _ in g.values()
+             for s in ("s19", "s42", "s58") for v in ("best", "last")]
+    require_no_prefix_collisions(names, what="sweep name")   # raises on collision
+
+    # Two tags must never collide with each other either.
+    ship = gates_for_tag("ship")
+    both = names + [tmpl % (s, v)
+                    for tmpl, _, _ in ship.values()
+                    for s in ("s19", "s42", "s58") for v in ("best", "last")]
+    require_no_prefix_collisions(both, what="sweep name")

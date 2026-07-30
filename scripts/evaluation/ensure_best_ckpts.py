@@ -1,10 +1,10 @@
 """Ensure every stage2 (model, seed) dir has a best.pth, using the as-shipped rule.
 
 The as-shipped best.pth (the checkpoint every downstream eval and inference run
-loads) is selected by the rule in the original make_best_ckpt_path.py: highest
-4-dp mIoU parsed from the FILENAME, tie-break on highest step, final fallback on
-name. This script applies that same rule wherever best.pth is missing, and
-audits existing best.pth files against it.
+loads) is selected by the historical filename rule: highest 4-dp mIoU parsed
+from the FILENAME, tie-break on highest step, final fallback on name. This
+script applies that same rule wherever best.pth is missing, and audits existing
+best.pth files against it.
 
 It also loads each candidate's stored full-float val_miou and reports where the
 filename rule disagrees with the trainer's full-float argmax (known case:

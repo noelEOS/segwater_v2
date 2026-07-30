@@ -1,7 +1,8 @@
 """Per-date Hampyeong metrics for alternative Swin-Base seed-42 checkpoints.
 
-Seed 42's shipped `best.pth` is picked by `make_best_ckpt_path.py` on the 4-decimal
-mIoU in the checkpoint FILENAME, breaking ties by max step. For Swin-Base s42 two
+Seed 42's shipped `best.pth` was picked by the historical filename rule (now
+preserved in scripts/evaluation/ensure_best_ckpts.py): the 4-decimal mIoU in the
+checkpoint FILENAME, breaking ties by max step. For Swin-Base s42 two
 checkpoints tie at that precision (step38400 and step39600, both miou0.9506), so the
 shipped pick is decided by the tiebreak rather than by the full-float validation mIoU.
 This script scores the alternative checkpoints' inference runs on the same pixels and

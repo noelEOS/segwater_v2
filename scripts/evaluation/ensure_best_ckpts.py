@@ -22,18 +22,18 @@ from __future__ import annotations
 
 import argparse
 import json
-import re
+import sys
 from pathlib import Path
 
 import torch
 
-STEP_RE = re.compile(r"step(\d+)")
-MIOU_RE = re.compile(r"miou([0-9]*\.?[0-9]+)")
-# SWA checkpoints (build_swa_checkpoint.py: `_swa{K}_step{min}-{max}.pth`) are a
-# derived, competing checkpoint-selection ARM, not a candidate for best.pth --
-# keeping them out of the pool is what makes best-vs-SWA an independent contrast.
-# They also carry val_miou=None, which the float cross-check below must survive.
-SWA_RE = re.compile(r"_swa\d+_step")
+# Selection rules, regexes and the best.pth candidate-pool exclusions live in ONE
+# place: scripts/evaluation/vm/ckptsel.py. They used to be re-implemented here and
+# in three other scripts (divergently). ckptsel is stdlib-only and part of the VM
+# eval kit, so it imports without an editable install.
+sys.path.insert(0, str(Path(__file__).resolve().parent / "vm"))
+import ckptsel  # noqa: E402
+from ckptsel import STEP_RE, best_pool  # noqa: E402
 
 DEFAULT_MODELS = [
     "upernet_tu-swin_base_patch4_window7_224",
@@ -49,14 +49,13 @@ DEFAULT_MODELS = [
 
 
 def pick_best_filename_rule(pths: list[Path]) -> Path:
-    """Highest 4-dp filename mIoU; tie-break on highest step; fallback on name."""
-    def key(p: Path):
-        miou_m = MIOU_RE.search(p.name)
-        step_m = STEP_RE.search(p.name)
-        miou = float(miou_m.group(1)) if miou_m else -1.0
-        step = int(step_m.group(1)) if step_m else -1
-        return (miou, step, p.name)
-    return max(pths, key=key)
+    """Highest 4-dp filename mIoU; tie-break on highest step; fallback on name.
+
+    Thin delegator to :func:`ckptsel.pick_best_filename_rule` (the one
+    implementation). Kept importable under this name: it is the as-shipped rule's
+    historical home and tests/test_ckptsel.py golden-parity-checks against it.
+    """
+    return ckptsel.pick_best_filename_rule(pths)
 
 
 def main() -> None:
@@ -78,13 +77,12 @@ def main() -> None:
             seed_dir = args.stage2_root / model / seed
             if not seed_dir.is_dir():
                 raise SystemExit(f"Missing seed dir: {seed_dir}")
-            step_ckpts = [p for p in sorted(seed_dir.glob("*.pth"))
-                          if p.name != "best.pth"
-                          and "_snap_" not in p.name
-                          and not SWA_RE.search(p.name)
-                          and not p.name.endswith("_last.pth")]
-            if not step_ckpts:
-                raise SystemExit(f"No step checkpoints in {seed_dir}")
+            # Identical exclusion set to the old local filter (best.pth / _snap_ /
+            # SWA / *_last.pth), now shared -- see ckptsel.is_best_candidate.
+            try:
+                step_ckpts = best_pool(seed_dir)
+            except ckptsel.CkptSelError as exc:
+                raise SystemExit(f"No step checkpoints in {seed_dir}") from exc
 
             filename_pick = pick_best_filename_rule(step_ckpts)
 
@@ -98,7 +96,7 @@ def main() -> None:
                 raw_miou, raw_step = ck.get("val_miou"), ck.get("step")
                 floats.append((float(raw_miou) if raw_miou is not None else float("-inf"),
                                int(raw_step) if raw_step is not None else -1, p))
-            float_pick = sorted(floats, key=lambda t: (t[0], t[1]))[-1][2]
+            float_pick = ckptsel.pick_best_float_rule(floats)
 
             best = seed_dir / "best.pth"
             entry = {

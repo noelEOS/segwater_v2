@@ -30,7 +30,8 @@ A_PRIORI_EXCLUSIONS = {"S1_20250730_105715_127_1_1"}
 WINDOW_END = pd.Timestamp("2024-12-31", tz="UTC")
 
 SEEDS = ["s19", "s42", "s58"]
-VARIANTS = ["best", "last"]
+VARIANTS = ["best", "last"]          # default arm set; --variants overrides
+ALL_VARIANTS = ["best", "last", "swa5"]
 ARMS = ["%s_%s" % (s, v) for s in SEEDS for v in VARIANTS]
 # All six arms are Swin-B mx630_stage2; the encoder guard still runs per arm so
 # a mis-wired config cannot slip a different backbone into the table.
@@ -63,18 +64,27 @@ def load_aoi(sample_tif):
 def main():
     ap = argparse.ArgumentParser(description=__doc__)
     ap.add_argument("--stride", type=int, required=True, choices=(32, 112))
+    ap.add_argument("--variants", nargs="+", default=VARIANTS, choices=ALL_VARIANTS,
+                    help="arm variants to build (default: %(default)s). Pass a "
+                         "subset to add an arm without rebuilding the others.")
     a = ap.parse_args()
-    out = OUT_DIR/("demak_full_ship_areas_s%d.csv" % a.stride)
+    arms = ["%s_%s" % (sd, v) for sd in SEEDS for v in a.variants]
+    expect_enc = {x: "tu-swin_base_patch4_window7_224" for x in arms}
+    # The filename carries the arm set: a --variants subset must NOT
+    # overwrite the full-campaign CSV. Default (best+last) keeps the
+    # historical name so existing consumers are unaffected.
+    tag = "" if list(a.variants) == VARIANTS else "_" + "-".join(a.variants)
+    out = OUT_DIR/("demak_full_ship_areas%s_s%d.csv" % (tag, a.stride))
     out.parent.mkdir(parents=True, exist_ok=True)
 
     rows, seen = [], {}
-    for arm in ARMS:
+    for arm in arms:
         seed, variant = arm.split("_")
         base = resolve_run_dir(RUNS, "demak_full_ship_%s_s%d" % (arm, a.stride))
         cfg = yaml.safe_load((base/"run_config.yaml").read_text())
         ck = cfg["inference"]["checkpoint_path"]
         enc = cfg["model"]["encoder_name"]
-        assert enc == EXPECT_ENC[arm], "%s: encoder %s != %s" % (arm, enc, EXPECT_ENC[arm])
+        assert enc == expect_enc[arm], "%s: encoder %s != %s" % (arm, enc, expect_enc[arm])
         assert ck not in seen, "duplicate ckpt: %s (%s and %s)" % (ck, seen.get(ck), arm)
         seen[ck] = arm
         assert cfg["inference"]["data"]["stride"] == a.stride, \
@@ -112,7 +122,7 @@ def main():
     df = pd.DataFrame(rows).sort_values(["arm", "datetime"])
     df.to_csv(out, index=False)
     print("\nwrote %s (%d rows = %d arms x 213)" % (out, len(df), len(ARMS)))
-    for arm in ARMS:
+    for arm in arms:
         n_win = int(df[df.arm == arm].in_analysis_window.sum())
         assert n_win == 206, "%s: in-window %d != 206" % (arm, n_win)
         print("  %-10s in analysis window: %d" % (arm, n_win))

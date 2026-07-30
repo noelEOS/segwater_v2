@@ -37,6 +37,35 @@ def test_require_raises_provenance_error():
     assert str(e.value) == "x"
 
 
+def test_require_message_must_not_be_built_from_the_failing_lookup():
+    """`require(cond, msg)` evaluates `msg` EAGERLY — it is an argument.
+
+    Regression: the digest-distinctness guard was written as
+
+        require(d not in digests, f"... {digests[d]} ...")
+
+    which raises ``KeyError`` on the PASSING path, because ``digests[d]`` is
+    looked up while building the argument, before ``require`` ever runs. The
+    ``assert cond, msg`` it replaced evaluated ``msg`` lazily, so the
+    assert->require conversion was strictly a regression here. Caught on the VM
+    2026-07-30: every Hampyeong scoring run died with KeyError despite the
+    provenance audit passing.
+
+    Guard the mechanism directly, and check the scorer has no such call left.
+    """
+    d = {}
+    with pytest.raises(KeyError):
+        require("k" not in d, f"absent: {d['k']}")   # the bug shape
+
+    src = (KIT / "score_pairbased_hampyeong.py").read_text()
+    for line in src.splitlines():
+        s = line.strip()
+        if s.startswith("require(") and " not in " in s and "[" in s.split(",", 1)[-1]:
+            raise AssertionError(
+                "require() message indexes a container the condition says is "
+                "absent — this raises on the passing path:\n  " + s)
+
+
 def test_provenance_error_is_not_assertion_error():
     """If it subclassed AssertionError, existing `except AssertionError`
     handlers elsewhere could swallow it."""

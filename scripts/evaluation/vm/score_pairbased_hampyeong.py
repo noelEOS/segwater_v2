@@ -222,7 +222,15 @@ def main() -> None:
             else:
                 require(np.array_equal(y_true, y_true_reference), f"{date}: y_true differs for {tag}")
             d = hashlib.sha1(y_pred.tobytes()).hexdigest()
-            require(d not in digests, f"{date}: {tag} identical prediction to {digests[d]} -- miswiring")
+            # NOT `require(d not in digests, f"...{digests[d]}...")`: the message
+            # is an ARGUMENT, so it is built before require() runs, and the
+            # lookup then raises KeyError on the PASSING path — the case where
+            # `d` is absent. `assert cond, msg` evaluated msg lazily; require()
+            # cannot, so the message must be constructed only after the check
+            # has already failed.
+            if d in digests:
+                raise ProvenanceError(
+                    f"{date}: {tag} identical prediction to {digests[d]} -- miswiring")
             digests[d] = tag
             m = compute_binary_metrics(y_true, y_pred, include_counts=True)
             # Per-entry override: one spec may span lineages (e.g. an mx630s2

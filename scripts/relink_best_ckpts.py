@@ -23,25 +23,26 @@ from __future__ import annotations
 
 import argparse
 import json
-import re
+import sys
 from pathlib import Path
 
 import torch
 
-STEP_RE = re.compile(r"step(\d+)")
-
-
-def _step_of(path: Path, ckpt: dict) -> int:
-    """Step from the checkpoint payload, falling back to the filename."""
-    step = ckpt.get("step")
-    if step is not None:
-        return int(step)
-    m = STEP_RE.search(path.name)
-    return int(m.group(1)) if m else -1
+# Shared checkpoint-selection rules (one implementation for the whole repo).
+# `step_of_checkpoint` is the payload-first rule this script has always used --
+# deliberately different from ckptsel.step_of (filename-only); see its docstring.
+sys.path.insert(0, str(Path(__file__).resolve().parent / "evaluation" / "vm"))
+import ckptsel  # noqa: E402
+from ckptsel import step_of_checkpoint  # noqa: E402
 
 
 def pick_best(candidates: list[Path]) -> tuple[Path, list[dict]]:
-    """Full-float val_miou argmax, ties to the later step. Mirrors the trainer."""
+    """Full-float val_miou argmax, ties to the later step. Mirrors the trainer.
+
+    Loading and the val_miou None-refusal stay local (this script REFUSES a
+    scoreless checkpoint where ensure_best_ckpts maps it to -inf); only the final
+    argmax is shared, via ckptsel.pick_best_float_rule.
+    """
     scored = []
     for p in candidates:
         ckpt = torch.load(p, map_location="cpu", weights_only=True)
@@ -52,9 +53,11 @@ def pick_best(candidates: list[Path]) -> tuple[Path, list[dict]]:
                 f"Use scripts/evaluation/ensure_best_ckpts.py (filename rule) instead."
             )
         scored.append({"name": p.name, "val_miou": float(val_miou),
-                       "step": _step_of(p, ckpt), "path": p})
+                       "step": step_of_checkpoint(p, ckpt), "path": p})
     scored.sort(key=lambda d: (d["val_miou"], d["step"]))
-    best = scored[-1]["path"]
+    best = ckptsel.pick_best_float_rule(
+        (d["val_miou"], d["step"], d["path"]) for d in scored
+    )
     return best, [{k: v for k, v in d.items() if k != "path"} for d in scored]
 
 

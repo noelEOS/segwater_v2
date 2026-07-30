@@ -1,9 +1,9 @@
+import argparse
 import csv
 import json
 import re
 import shutil
 import subprocess
-import sys
 import time
 from concurrent.futures import CancelledError, ThreadPoolExecutor, as_completed
 from datetime import datetime, timezone
@@ -75,8 +75,30 @@ def build_scene_paths(root_dir: str, run_name: str, image: str, shoreline_format
     }
 
 
-def main():
-    cfg_path = Path(sys.argv[1] if len(sys.argv) > 1 else "configs/inference_sweep.yaml")
+def parse_args(argv=None):
+    parser = argparse.ArgumentParser(
+        description="Run an inference sweep (checkpoint x preset) from a YAML config."
+    )
+    parser.add_argument(
+        "config", nargs="?", default="configs/inference_sweep.yaml",
+        help="sweep config YAML (default: configs/inference_sweep.yaml)",
+    )
+    parser.add_argument(
+        "--strict", action="store_true",
+        help=(
+            "exit non-zero if any scene job is not 'success'. OFF by default: "
+            "scripts/benchmark_inference_config_sweep.py:93-97 raises RuntimeError "
+            "on ANY non-zero child exit, so a default non-zero exit would abort "
+            "that benchmark harness mid-run. Safe (and recommended) for the "
+            "shell callers -- run_ship_inference.sh / run_site_eval.sh."
+        ),
+    )
+    return parser.parse_args(argv)
+
+
+def main(argv=None):
+    args = parse_args(argv)
+    cfg_path = Path(args.config)
     cfg = OmegaConf.to_container(OmegaConf.load(cfg_path), resolve=True)
     sweep = cfg["sweep"]
 
@@ -312,6 +334,13 @@ def main():
         "num_scene_jobs": len(manifest_rows),
         "checkpoint_loads_expected": len(groups),
         "status_counts": counts,
+        # Additive provenance, for the completion check that the exit code cannot
+        # give (this script exits 0 even when groups fail): the per-run scene
+        # expectation and the run dirs this sweep wrote into. Compare against
+        # `ls <root_dir>/<run_dir>/*/*_probability_water.tif | wc -l`, or
+        # scripts/evaluation/vm/completion.py.
+        "expected_scenes_per_run": len(images),
+        "run_dirs": sorted({spec["run_name"] for spec in group_specs}),
         "manifest_csv": str(sweep_root / "sweep_manifest.csv"),
         "commands_txt": str(sweep_root / "commands.txt"),
     }
@@ -320,6 +349,24 @@ def main():
     print("Sweep complete")
     print(f"Manifest: {sweep_root / 'sweep_manifest.csv'}")
     print(f"Summary: {sweep_root / 'sweep_summary.json'}")
+
+    # Make partial failure MACHINE-VISIBLE. `continue_on_error: true` is in every
+    # sweep template, so a sweep can finish short of its scene count and still
+    # exit 0; without this line the only trace is a status column in the CSV.
+    n_bad = counts.get("failed", 0) + counts.get("skipped", 0)
+    if n_bad:
+        print(f"WARNING: {n_bad} scene job(s) not successful: {counts}")
+        print(
+            f"  verify completeness by counting *_probability_water.tif per run dir "
+            f"against {len(images)} expected scene(s): "
+            f"python scripts/evaluation/vm/completion.py --expected {len(images)} "
+            f"--check {root_dir}/<run_dir>"
+        )
+        if args.strict:
+            raise SystemExit(
+                f"--strict: {n_bad} scene job(s) not successful "
+                f"(see {sweep_root / 'sweep_summary.json'})"
+            )
 
 
 if __name__ == "__main__":

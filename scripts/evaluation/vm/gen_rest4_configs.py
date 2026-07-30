@@ -1,3 +1,27 @@
+"""DEPRECATED (2026-07-30) — superseded by ``ship/gen_ship_configs.py``.
+
+Kept as the **executable record** of the tracked rest-4 sweep configs it produced
+(`configs/aucroc/*rest4*.yaml`). Do not use it to generate NEW configs; regenerate
+from `ship/gen_ship_configs.py`, which is the one hardened generator.
+
+What this file lacks that the ship generator has:
+  * **String-concatenated YAML emission.** The config is built by appending
+    ~40 `lines.append("  key: value")` strings and joining them — nothing
+    validates that the result parses, and an indentation typo produces a
+    silently different config rather than an error. The ship generator emits
+    from a single format template checked against the tracked configs.
+  * **No prefix-collision check on the emitted sweep names.** A generated name
+    that is a prefix of another (`…_mx630k` vs `…_mx630k_best`) makes every
+    later run-dir lookup ambiguous — the bug class runsel exists to catch, but
+    at generation time it must be `naming.require_no_prefix_collisions`
+    (which `gen_ship_configs.py` calls; this file has no equivalent).
+  * **No atomic write.** Configs are written with a plain `write_text`, so an
+    interrupted run leaves a truncated YAML that looks like a real config.
+
+It DOES already resolve run dirs through `runsel.resolve_run_dir` with a
+`suffix=` pin (keeping `unet_resnet50` from matching `unetplusplus_resnet50`),
+which is why it was left functional rather than deleted.
+"""
 import glob, os, sys
 from pathlib import Path
 

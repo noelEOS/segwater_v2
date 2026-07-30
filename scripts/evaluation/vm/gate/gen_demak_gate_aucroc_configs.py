@@ -1,8 +1,30 @@
-"""Generate AUC-ROC scoring configs, one per Demak gate inference run.
+"""DEPRECATED (2026-07-30) — superseded by ``ship/gen_ship_configs.py``.
 
-Discovers run dirs by the `gate_{arm}_demak_{seed}_...` prefix so it stays in
-sync with whatever the inference batch actually produced. Fails loudly if an
-expected arm is missing or ambiguous rather than silently scoring 8 of 9.
+Kept as the **executable record** of the tracked `configs/aucroc/demak_gate_*`
+scoring configs it produced (2026-07-25 checkpoint-selection gate). Do not
+generate NEW configs with it.
+
+Unlike the three sibling gate generators this one resolves RUN DIRS, not
+checkpoints — it has no `resolve()` copy to diverge, and it already goes through
+`runsel.resolve_run_dirs` (anchored on the UTC stamp). What it still lacks:
+  * **No prefix-collision check** on the emitted `demak_gate_{arm}_{seed}_s32`
+    config/run names (`naming.require_no_prefix_collisions`, which
+    `gen_ship_configs.py` calls). None of the five deprecated generators has one.
+  * **Hardcoded expected scene count.** `if n_tif != 6` inlines the Demak-gate
+    completion contract as a literal. That number now lives in one place,
+    `completion.EXPECTED_SCENES["demak_gate"]`, alongside the reasons the naive
+    completion signals (run_metadata.json, run_summary.json, sweep exit code)
+    are all wrong; a literal here can drift from it silently.
+  * **Its own probability-raster glob** (`*/*_probability_water.tif`) rather than
+    `completion.count_probability_rasters`, so it does not get the AppleDouble
+    (`._*`) stub filtering that inflated tif counts elsewhere.
+  * **No atomic write** — configs go out via plain `write_text`.
+
+Original docstring: generate AUC-ROC scoring configs, one per Demak gate
+inference run; discover run dirs by the `gate_{arm}_demak_{seed}_...` prefix so
+it stays in sync with whatever the inference batch actually produced; fail
+loudly if an expected arm is missing or ambiguous rather than silently scoring
+8 of 9.
 """
 from pathlib import Path
 import sys

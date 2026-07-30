@@ -1,4 +1,30 @@
-"""Emit the Hampyeong gate scoring spec (9 entries: 3 seeds x best/last/swa5)."""
+"""DEPRECATED (2026-07-30) — superseded by ``ship/gen_ship_configs.py``.
+
+Kept as the **executable record** of the tracked `specs/hampyeong_gate.yaml`
+(9 entries: 3 seeds x best/last/swa5). Do not emit NEW specs with it; the ship
+campaign's spec (`ship/spec_hampyeong_ship.yaml`) is hand-written and covered by
+`tests/test_spec_schema.py`.
+
+What its local `resolve()` (below) lacks that `gen_ship_configs.py` has via
+``ckptsel``:
+  * **Returns None instead of raising**, collapsing "missing" and "ambiguous"
+    (`c[0] if len(c) == 1 else None`) into one silent outcome with no candidate
+    list. `ckptsel.resolve_last` raises `CkptSelError` naming the candidates.
+  * **No `_last.pth` guard on the `best` arm** — `best.pth` is `.resolve()`d but
+    its target is never checked, so a `best.pth` pointing at a `*_last.pth`
+    would emit a spec whose `early_best` and `save_last` entries name the SAME
+    checkpoint. The scorer's own distinctness audit would then be the only thing
+    catching it, at score time rather than generation time.
+    `ckptsel.resolve_best` refuses it outright.
+  * **No seed-token check** (`ckptsel.require_seed_token`) and **no sha256
+    distinctness check** (`ckptsel.assert_distinct_weights`) across the 9 arms.
+  * **No prefix-collision check** on the `glob:` run-dir patterns it writes into
+    the spec (`naming.require_no_prefix_collisions`); the anchoring in
+    `runsel.resolve_glob_spec` is what protects those at score time.
+
+Original docstring: emit the Hampyeong gate scoring spec (9 entries: 3 seeds x
+best/last/swa5).
+"""
 from pathlib import Path
 import sys
 

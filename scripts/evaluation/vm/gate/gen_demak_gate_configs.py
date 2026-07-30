@@ -1,7 +1,33 @@
-"""Generate the 9 Demak gate configs (3 seeds x best/last/swa5) on the VM.
+"""DEPRECATED (2026-07-30) — superseded by ``ship/gen_ship_configs.py``.
 
-Resolves each arm's checkpoint by GLOB against the real seed dir so no filename
-is hardcoded; refuses to emit a config for an arm whose checkpoint is missing.
+Kept as the **executable record** of the 9 tracked Demak gate configs it
+produced (the 2026-07-25 checkpoint-selection gate). Do not generate NEW configs
+with it.
+
+What its local `resolve()` (below) lacks that `gen_ship_configs.py` has, now that
+checkpoint selection lives in ``ckptsel``:
+  * **Returns None instead of raising.** `resolve()` signals every failure by
+    returning `None`; `main()` then appends to `missing` and *continues*. So a
+    partially-resolved gate emits 8 of 9 configs and only the trailing MISSING
+    line distinguishes it from success. `ckptsel.resolve_best/resolve_last`
+    raise `CkptSelError` with the candidate list.
+  * **No `_last.pth` guard on the `best` arm.** `arm == "best"` returns
+    `seed_dir/"best.pth"` if it merely *exists*, without resolving the symlink
+    or checking its target. A `best.pth` pointing at a `*_last.pth` — always a
+    wiring error, since best and last are competing arms — is accepted here and
+    silently makes two arms the same weights. `ckptsel.resolve_best` refuses it.
+  * **No seed-token check.** Nothing verifies the resolved FILENAME carries
+    `_<seed>_`, so a checkpoint copied into the wrong seed dir passes every
+    path-based check. `ckptsel.require_seed_token` catches exactly that.
+  * **No sha256 distinctness check across arms** (`ckptsel.assert_distinct_weights`).
+  * **No prefix-collision check** on the emitted `gate_{arm}_demak_{seed}` sweep
+    names (`naming.require_no_prefix_collisions`) — none of the five deprecated
+    generators has one.
+
+Original docstring: generate the 9 Demak gate configs (3 seeds x
+best/last/swa5) on the VM; resolve each arm's checkpoint by GLOB against the real
+seed dir so no filename is hardcoded; refuse to emit a config for an arm whose
+checkpoint is missing.
 """
 from pathlib import Path
 import sys

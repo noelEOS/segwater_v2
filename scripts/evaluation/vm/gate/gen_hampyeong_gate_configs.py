@@ -1,7 +1,33 @@
-"""Generate the 9 Hampyeong gate inference configs (3 seeds x best/last/swa5).
+"""DEPRECATED (2026-07-30) — superseded by ``ship/gen_ship_configs.py``.
 
-Mirrors the tracked hampyeong sweep configs exactly (keep_top_k 5, length filter
-OFF, native224-s32); only sweep.name and the single checkpoint differ per arm.
+Kept as the **executable record** of the 9 tracked Hampyeong gate inference
+configs it produced (2026-07-25 checkpoint-selection gate). Do not generate NEW
+configs with it.
+
+What its local `resolve()` (below) lacks that `gen_ship_configs.py` has via
+``ckptsel`` — this is the WEAKEST of the four gate copies:
+  * **Silently swallows ambiguity.** `return c[0] if len(c) == 1 else None`
+    collapses "no `*_last.pth`" and "THREE `*_last.pth`" into the same `None`,
+    printing nothing about which happened or what the candidates were. The
+    sibling `gen_demak_gate_configs.py` at least prints an `expected 1 match,
+    got N` line. `ckptsel.resolve_last` raises `CkptSelError` listing the
+    candidate filenames.
+  * **Returns None instead of raising**, so `main()` continues and emits a
+    partial set of configs (8 of 9) with only a trailing MISSING line.
+  * **No `_last.pth` guard on the `best` arm.** `best.pth` is accepted on
+    `exists()` alone; if it points at a `*_last.pth` the best and last arms
+    become the same weights — undetected here, refused by
+    `ckptsel.resolve_best`.
+  * **No seed-token check** — a checkpoint copied into the wrong seed dir passes
+    (`ckptsel.require_seed_token`), and **no sha256 distinctness check** across
+    arms (`ckptsel.assert_distinct_weights`).
+  * **No prefix-collision check** on the emitted `gate_{arm}_hampyeong_{seed}`
+    sweep names (`naming.require_no_prefix_collisions`).
+
+Original docstring: generate the 9 Hampyeong gate inference configs (3 seeds x
+best/last/swa5); mirrors the tracked hampyeong sweep configs exactly (keep_top_k
+5, length filter OFF, native224-s32); only sweep.name and the single checkpoint
+differ per arm.
 """
 from pathlib import Path
 import sys

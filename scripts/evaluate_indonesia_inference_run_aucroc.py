@@ -1,7 +1,7 @@
+import argparse
 import json
 import re
 import shutil
-import sys
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
@@ -377,8 +377,43 @@ def summarize_loo_threshold_evaluation(df_loo: pd.DataFrame, metrics: list[str])
     return pd.DataFrame(rows)
 
 
+def parse_args(argv: list[str] | None = None) -> Path:
+    """Resolve the evaluation config path from the command line.
+
+    A config is REQUIRED. This script used to fall back to a hardcoded
+    Mac-side path when invoked with no arguments, which meant a mistyped or
+    forgotten argument silently scored a different dataset than intended. The
+    fallback was removed deliberately; failing loudly is the point.
+    """
+    ap = argparse.ArgumentParser(
+        description="Score an Indonesia inference run (AUC-ROC / AP + threshold metrics).",
+    )
+    ap.add_argument(
+        "config",
+        nargs="?",
+        default=None,
+        help="path to the evaluation config YAML",
+    )
+    ap.add_argument(
+        "--config",
+        dest="config_flag",
+        default=None,
+        help="path to the evaluation config YAML (same as the positional form)",
+    )
+    args = ap.parse_args(argv)
+    config_path = args.config_flag or args.config
+    if config_path is None:
+        ap.error(
+            "a config is required: pass it positionally or with --config. "
+            "The old silent fallback to a hardcoded Mac-side default "
+            "(configs/evaluation/indonesia_inference_run_aucroc_semarang.yaml) "
+            "was removed deliberately -- it silently scored the wrong data."
+        )
+    return Path(config_path)
+
+
 def main() -> None:
-    config_path = Path(sys.argv[1] if len(sys.argv) > 1 else "configs/evaluation/indonesia_inference_run_aucroc_semarang.yaml")
+    config_path = parse_args()
     cfg = load_config(config_path)
     evaluation = cfg["evaluation"]
 

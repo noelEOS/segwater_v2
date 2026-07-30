@@ -202,6 +202,30 @@ def resolve_last(seed_dir) -> Path:
     return hits[0]
 
 
+def resolve_swa(seed_dir) -> Path:
+    """The single SWA checkpoint of a seed dir; raises on 0 or >1.
+
+    Matches ``_swa{K}_step{min}-{max}.pth`` via :data:`SWA_RE` — the same regex
+    that EXCLUDES these from the ``best`` pool, so the two uses cannot drift
+    apart. Build one with ``scripts/evaluation/build_swa_checkpoint.py``
+    (``--last-k 5`` is the registered ``swa5`` convention: average the last five
+    snapshots of the post-decay spine, no BN refresh for Swin-B).
+
+    >1 is a hard error rather than "newest wins": a second SWA file means two
+    different averaging windows are present (e.g. ``swa5`` beside ``swa3``), and
+    picking by sort order would silently choose one.
+    """
+    seed_dir = Path(seed_dir)
+    hits = sorted(p for p in seed_dir.glob("*.pth") if SWA_RE.search(p.name))
+    if len(hits) != 1:
+        raise CkptSelError(
+            "%s: expected 1 SWA checkpoint, found %d: %s — build one with "
+            "build_swa_checkpoint.py --seed-dir <dir> --last-k 5"
+            % (seed_dir, len(hits), [h.name for h in hits])
+        )
+    return hits[0]
+
+
 def require_seed_token(path, seed: str) -> None:
     """The resolved FILENAME must carry ``_<seed>_``. A checkpoint copied into
     the wrong seed dir passes every path-based check but fails this one."""

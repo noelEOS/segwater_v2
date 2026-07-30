@@ -145,8 +145,11 @@ def resolve_ckpt(seed: str, variant: str) -> Path:
     d = STAGE2 / seed
     if not d.is_dir():
         raise SystemExit("missing seed dir: %s" % d)
+    resolver = {"best": ckptsel.resolve_best,
+                "last": ckptsel.resolve_last,
+                "swa5": ckptsel.resolve_swa}[variant]
     try:
-        p = ckptsel.resolve_best(d) if variant == "best" else ckptsel.resolve_last(d)
+        p = resolver(d)
         ckptsel.require_seed_token(p, seed)
     except ckptsel.CkptSelError as exc:
         raise SystemExit("%s/%s: %s" % (seed, variant, exc)) from exc
@@ -205,7 +208,13 @@ def main() -> None:
     ap = argparse.ArgumentParser(description=__doc__)
     ap.add_argument("--out-root", type=Path,
                     default=Path.home() / "configs/ship_decision_2026-07")
+    ap.add_argument("--variants", nargs="+", default=VARIANTS,
+                    choices=["best", "last", "swa5"],
+                    help="arms to emit (default: %(default)s). Pass a subset to "
+                         "add an arm to a campaign whose other arms are already "
+                         "run — regenerating them would mint new sweep names.")
     a = ap.parse_args()
+    variants = list(a.variants)
 
     # --- resolve + audit every arm BEFORE writing anything --------------------
     # One dict, ONE key type ("<seed>/<variant>"). It used to be double-keyed with
@@ -214,7 +223,7 @@ def main() -> None:
     # ckptsel.assert_distinct_weights now owns the digest/collision logic.
     arms = {}
     for seed in SEEDS:
-        for variant in VARIANTS:
+        for variant in variants:
             arms["%s/%s" % (seed, variant)] = resolve_ckpt(seed, variant)
     try:
         digests = ckptsel.assert_distinct_weights(arms)
@@ -223,7 +232,7 @@ def main() -> None:
 
     print("=== ARMS (%d) ===" % (len(arms)))
     for seed in SEEDS:
-        for variant in VARIANTS:
+        for variant in variants:
             key = "%s/%s" % (seed, variant)
             print("  %-3s %-4s  %s  %s" % (seed, variant, digests[key][:16], arms[key].name))
     print("=== sha256 DISTINCTNESS: %d distinct / %d arms  OK ==="
@@ -233,7 +242,7 @@ def main() -> None:
     n = 0
     for gate, g in GATES.items():
         for seed in SEEDS:
-            for variant in VARIANTS:
+            for variant in variants:
                 ckpt = arms["%s/%s" % (seed, variant)]
                 if g["split_by_stride"]:
                     for s in g["strides"]:

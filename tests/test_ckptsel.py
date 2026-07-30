@@ -25,6 +25,7 @@ from ckptsel import (  # noqa: E402
     pick_best_float_rule,
     resolve_best,
     resolve_last,
+    resolve_swa,
     require_seed_token,
     role_of,
     sha256,
@@ -104,6 +105,41 @@ def test_pool_excludes_best_snap_swa_last(tmp_path):
     assert not is_best_candidate("m_step31200_snap_miou0.9460.pth")
     assert not is_best_candidate("m_swa5_step31200-40320.pth")
     assert not is_best_candidate("m_step40320_last.pth")
+
+
+#: `S42_NAMES` already carries one SWA file, so the default fixture is the
+#: happy path for resolve_swa.
+_SWA_IN_FIXTURE = "swinb_s42_swa5_step31200-40320.pth"
+_NO_SWA = [n for n in S42_NAMES if n != _SWA_IN_FIXTURE]
+
+
+def test_resolve_swa_picks_the_one_swa_checkpoint(tmp_path):
+    """`swa5` is a third competing arm beside best/last, resolved by SWA_RE —
+    the same regex that EXCLUDES these from the best pool, so the two uses
+    cannot drift apart."""
+    d = make_seed_dir(tmp_path, best_target=S42_NAMES[1])
+    assert resolve_swa(d).name == _SWA_IN_FIXTURE
+    # and the same file is still excluded from the best pool
+    assert _SWA_IN_FIXTURE not in [p.name for p in best_pool(d)]
+
+
+def test_resolve_swa_raises_on_zero(tmp_path):
+    d = make_seed_dir(tmp_path, names=_NO_SWA, best_target=_NO_SWA[1])
+    with pytest.raises(CkptSelError) as e:
+        resolve_swa(d)
+    assert "build_swa_checkpoint.py" in str(e.value), "message must say how to make one"
+
+
+def test_resolve_swa_raises_on_two_averaging_windows(tmp_path):
+    """Two SWA files mean two different averaging windows (swa5 beside swa3).
+    Picking by sort order would silently choose one, so >1 is a hard error."""
+    d = make_seed_dir(tmp_path, best_target=S42_NAMES[1])
+    (d / "swinb_s42_swa3_step36000-40320.pth").touch()
+    with pytest.raises(CkptSelError) as e:
+        resolve_swa(d)
+    assert "found 2" in str(e.value)
+    for n in (_SWA_IN_FIXTURE, "swinb_s42_swa3_step36000-40320.pth"):
+        assert n in str(e.value), "error must list the candidates"
 
 
 def test_empty_pool_raises(tmp_path):

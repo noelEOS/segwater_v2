@@ -58,8 +58,18 @@ def main():
     ap.add_argument("--area-csv", action="append", required=True, dest="csvs")
     ap.add_argument("--stride", action="append", required=True, type=int, dest="strides")
     ap.add_argument("--col", default="area_ha_thr0.5")
+    ap.add_argument("--variants", nargs="+", default=VARIANTS,
+                    choices=["best", "last", "swa5"],
+                    help="arm variants present in the area CSVs "
+                         "(default: %(default)s)")
+    ap.add_argument("--out", type=Path, default=None,
+                    help="output CSV (default: %s/demak_full_ship_trend_s2matched.csv). "
+                         "Pass an explicit path for a non-`ship` campaign — the "
+                         "default name would overwrite the Swin-B table."
+                         % OUT_DIR)
     a = ap.parse_args()
     assert len(a.csvs) == len(a.strides), "--area-csv / --stride must pair up"
+    arms = ["%s_%s" % (s, v) for s in SEEDS for v in a.variants]
 
     o = pd.read_csv(S2_CSV, parse_dates=["datetime"])
     o = o[(o.datetime >= W0) & (o.datetime <= W1)]
@@ -73,7 +83,7 @@ def main():
     out, matched_sets = [], {}
     for csv, stride in zip(a.csvs, a.strides):
         df = pd.read_csv(csv, parse_dates=["datetime"])
-        for arm in ARMS:
+        for arm in arms:
             s = df[(df.arm == arm) & (df.scene_id != ORBIT127)]
             s = s[s.datetime <= W1].sort_values("datetime").reset_index(drop=True)
             assert len(s) == 206, "%s s%d: in-window %d != 206" % (arm, stride, len(s))
@@ -89,14 +99,14 @@ def main():
                             stride=stride, slope_ha_yr=sl, hac_se=se, ci_lo=lo,
                             ci_hi=hi, maxlags=lags, n=n, estimand="s2matched"))
 
-    ref = matched_sets[(a.strides[0], ARMS[0])]
+    ref = matched_sets[(a.strides[0], arms[0])]
     for k, v in matched_sets.items():
         assert v == ref, "%s: matched scene set differs" % (k,)
     print("\nmatched scene set identical across all %d arm x stride cells (n=48)"
           % len(matched_sets))
 
     t = pd.DataFrame(out).sort_values(["stride", "variant", "seed"])
-    p = OUT_DIR/"demak_full_ship_trend_s2matched.csv"
+    p = a.out or OUT_DIR/"demak_full_ship_trend_s2matched.csv"
     p.parent.mkdir(parents=True, exist_ok=True)
     t.to_csv(p, index=False)
     print("wrote %s (%d rows)" % (p, len(t)))

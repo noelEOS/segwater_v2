@@ -7,12 +7,19 @@ survives VM cleanups and works on a fresh VM or a fleet.
 Goal: an agent bringing up a VM to evaluate one site/model should only need to
 (1) verify/scp inputs, (2) run inference if the run dir is absent, (3) score.
 
+> **Which runbook do I read?** → **`docs/RUNBOOK_INDEX.md`** routes any task to
+> the (usually two) documents it needs, and collects the rules that apply across
+> all of them. Start there if you are not already sure.
+
 ## Contents
 
 | File | What |
 |---|---|
 | `score_pairbased_hampyeong.py` | ONE config-driven Hampyeong scorer, `--spec <yaml>`. Replaces the 3 hand-forked VM scorers. |
 | `runsel.py` | **load-bearing — copy with the kit.** Unambiguous run-dir resolution: a bare prefix glob matches longer siblings (`demak_full_mx630k_*` also matches `…_mx630k_best_…`), so every lookup anchors on the `_<UTC stamp>_` the sweep always emits. Stdlib-only, no editable install needed. Tests: `tests/test_runsel.py`. |
+| `completion.py` | **load-bearing.** The one definition of "this run finished": expected scene count per gate + a `*/*_probability_water.tif` count (AppleDouble `._*` stubs excluded). Exists because every other signal lies — `run_metadata.json` is an *eval* output that never appears in a run dir, `run_summary.json` is rewritten per scene, and `continue_on_error: true` lets a short sweep exit 0. Shell reads the numbers via `--print-expected` instead of keeping a second copy. Tests: `tests/test_completion.py`. |
+| `ckptsel.py` | **load-bearing.** One checkpoint-selection implementation, replacing four divergent copies. `best` = the `best.pth` **symlink** only (never glob `*_pmwiou*.pth` — several per seed dir, so a glob picks by sort order) and refuses a `best.pth` pointing at a `*_last.pth`; `last` = the single `*_last.pth`, raising on 0 or >1. Plus `require_seed_token` (mis-copied checkpoint) and `assert_distinct_weights` (sha256 across arms). Keeps the deliberate filename-mIoU vs full-float rules as separate named functions. Tests: `tests/test_ckptsel.py`. |
+| `naming.py` | **load-bearing.** `require_no_prefix_collisions` — the generation-time check for the hazard `runsel` catches at read time (a sweep name that is a prefix of another makes every later lookup ambiguous) — plus `atomic_write`/`atomic_to_csv`, so a killed writer never leaves a partial artifact that looks complete. Docstring records the deliberate **no-lockfile** decision. Tests: `tests/test_naming.py`. |
 | `analysis/` | area builders, trend fitters and comparison tools — see `analysis/README.md`. |
 | `specs/hampyeong_{swin,rest4,savelast}.yaml` | the three scoring targets as data. Proven byte-identical to the original forks (2026-07-25). |
 | `specs/hampyeong_gate.yaml` | 9-entry spec (3 seeds × best/last/SWA-5) for the 2026-07-25 checkpoint-selection gate. |
@@ -93,10 +100,58 @@ forks on 2026-07-25 (same MD5 on the output CSV):
 | swin | `c765ab6f3382…` | 9 |
 | savelast | `90ad4c5d4efb…` | 6 |
 
-The scorer's provenance audit asserts config==summary==manifest checkpoint,
+The scorer's provenance audit checks config==summary==manifest checkpoint,
 stride 32, threshold 0.5, per-entry expected checkpoint, and no shared
 checkpoint across entries — so a mis-pointed spec fails loudly, it does not
-silently mis-score.
+silently mis-score. Those guards are `raise ProvenanceError`, not `assert`
+(2026-07-30): under `python -O` the old asserts were stripped and the "fails
+loudly" claim above was false.
+
+Spec **schema** is now checked Mac-side by `tests/test_spec_schema.py`: every
+tracked spec must carry the keys the scorer dereferences (`label`, `slug`,
+`seed`, `run_dir`, `checkpoint` per entry). Previously a spec missing `slug`
+raised a bare `KeyError` *after* the audit had already printed "passed".
+
+## Rules now enforced by code (and where)
+
+Most of this kit's correctness rules used to live only as prose here or in the
+runbooks. As of **2026-07-30** each of the following has an enforcing call site;
+the prose is now a description of a check, not the check itself. If you are
+tempted to re-document one of these as a manual step, look at the code first.
+
+| Rule | Enforced by |
+|---|---|
+| The repo must be pip-installed **editable** (else sweeps exit 0 doing nothing) | `check_inputs.sh` → `chk_import` in the `common` block, run from a subshell `cd /tmp` so cwd cannot mask it. Also checks `cv2` (common) and `sklearn` (demak). |
+| A run is complete only at its **expected scene count** | `completion.EXPECTED_SCENES` + `python completion.py --gate <g> --check DIR...` (exit 1 if any short). Counts `*/*_probability_water.tif`, excluding AppleDouble `._*` stubs. `--print-expected` feeds the shell so no second copy of the numbers exists. |
+| **Per-site SDS flags** (Duck `--keep-top-k 999`; Trucvert / Torrey Pines `--no-min-chainage-length`) | `sds_core.SITE_REQUIRED_FLAGS` + validation in `run_sds_from_rasters.main()`, which `p.error`s naming the missing flag. Override: `--i-know-this-site-needs-flags`. Deliberately a **validation error, not an auto-applied default** — auto-defaults would change the estimand of an already-logged command. Lives in the `SDS_Benchmark_slim/` **nested** repo (commit `42c3167`). |
+| No **sweep name may prefix another** (else every later run-dir lookup is ambiguous) | `naming.require_no_prefix_collisions`, called by `ship/gen_ship_configs.py` over the generated config stems. This is the generation-time half of the rule; `runsel` is the read-time half. |
+| **best/last checkpoint resolution** | `ckptsel.resolve_best` (the `best.pth` symlink only — never glob `*_pmwiou*.pth`; refuses a target ending `_last.pth`) and `ckptsel.resolve_last` (exactly one `*_last.pth`). Adopted by `ensure_best_ckpts.py`, `relink_best_ckpts.py`, `eval_stratified_ladder.py`, `build_swa_checkpoint.py`, `ship/gen_ship_configs.py`. |
+| **Run-dir resolution** — never a bare prefix glob, never `hits[0]` / `head -1` | `runsel.resolve_run_dir` / `resolve_run_dirs(expect=)` / `resolve_glob_spec`, anchored on the `_<UTC stamp>_`. |
+| A sweep that lost scenes must be **machine-visible** | `run_inference_sweep.py`: unconditional `WARNING: N scene job(s) not successful` after the summary, plus `--strict` → non-zero exit. Not non-zero by default, because `benchmark_inference_config_sweep.py` raises on any non-zero child and would abort mid-benchmark. |
+| Hampyeong **provenance guards** must survive `python -O` | `score_pairbased_hampyeong.py`: `ProvenanceError` + `require()`, replacing 11 bare `assert`s (message strings verbatim, including the "refusing to clobber" text). |
+| **SDS scene-extraction failures** must not look like success | `run_sds_from_rasters.py`: `failed_scenes_by_threshold` + `n_failed_scenes_total` in `sweep_summary.json`, and a non-zero exit **after** all outputs are written (a partial run stays inspectable). `sweep_metrics.csv` unchanged. |
+| **Consolidation joins** must not silently drop arms | `ship/consolidate_ship_results.py`: seed-key normalization in all four join loops (`"19"`/`19`/`"s19"`), per-source "N read, M matched, K unmatched" accounting, always exit 1 when a gate CSV was read and **zero** rows matched, and `--strict` for the final pass. |
+| **Collation completeness** | `analysis/collate_sds_arms2.py --expect-arms` (default `len(SPEC)`): exits non-zero unless collation ends with that many distinct `model` values, so an unfinished sweep root cannot produce a short table that looks complete. Multi-match spec keys are fatal rather than silently dropping both arms. |
+
+Tests for all of the above are Mac-side and VM-free: `tests/test_completion.py`,
+`test_ckptsel.py`, `test_naming.py`, `test_runsel.py`, `test_spec_schema.py`,
+`test_build_ship_manifest.py`, `test_consolidate_ship.py`,
+`test_collate_sds_arms2.py`, `test_sds_site_flags.py`, `test_hampyeong_guards.py`,
+`test_raster_verifiers.py`, `test_manifest_row_append.py`.
+
+### Test environment
+
+The repo suite runs with the **`segwater-test` env python** — the base conda
+`python` has no pytest:
+
+```bash
+/opt/homebrew/Caskroom/miniforge/base/envs/segwater-test/bin/python -m pytest -q
+```
+
+`pytest.ini` collects `tests` **and** `scripts/tests` (the latter holds the
+backup and stitcher-parity harnesses; `test_backup_runs_to_drive.py` is a
+`main()`-style harness wrapped in one pytest test so it is collected coverage
+rather than something to remember to run by hand).
 
 ## Config caveats (read before running inference)
 
@@ -115,14 +170,45 @@ silently mis-score.
 This kit covers **Demak + Hampyeong** only. SDS (satellite-derived shoreline:
 NARRABEEN / DUCK / TORREYPINES / TRUCVERT) runs from the `SDS_Benchmark_slim/`
 tree, which is intentionally **not** part of this kit — it is a 461 MB
-third-party benchmark with its own layout and vendored CoastSat, untracked in
-this repo. Do not copy it in here.
+third-party benchmark with its own layout and vendored CoastSat. Do not copy it
+in here.
+
+### ⚠️ `SDS_Benchmark_slim/` is a NESTED git repo
+
+It has **its own git history and no remote** (like `docs/`), so the parent repo
+cannot track files inside it. Consequences:
+
+- **Commit with `git -C SDS_Benchmark_slim`**, never `git add -f` from the parent.
+- **Scorer provenance:** an SDS result is only reproducible together with the
+  slim tree's commit. Record it alongside the results CSV:
+
+  ```bash
+  git -C ~/SDS_Benchmark_slim rev-parse --short HEAD
+  ```
+
+  The site-flag validation and non-zero-exit hardening are commit `42c3167`
+  (2026-07-30); results produced before it ran under the old
+  exit-0-on-failed-extraction behaviour.
+- **Edits go in the slim tree only** — never in
+  `SDS_Benchmark-0.0-reproducidibility/`, which is the untouched upstream
+  reproducibility tree.
 
 Short version for an agent asked to do SDS on the VM:
 
-1. `rsync -az --exclude='__pycache__' SDS_Benchmark_slim/ gcp-vm:~/SDS_Benchmark_slim/`
-   (461 MB, ~15 s, ingress free). The tree is relocatable — `sds_core.py`
-   derives `REPO_ROOT` from its own path.
+1. Sync the tree (461 MB, ~15 s, ingress free). The tree is relocatable —
+   `sds_core.py` derives `REPO_ROOT` from its own path.
+
+   ```bash
+   gcloud compute config-ssh          # refresh: the external IP changes on restart
+   rsync -az --exclude='__pycache__' SDS_Benchmark_slim/ \
+     <instance>.<zone>.<project>:~/SDS_Benchmark_slim/
+   ```
+
+   ⚠️ **Use the full `config-ssh` hostname, never a `gcp-vm` alias.**
+   `docs/RUNBOOK_INDEX.md` forbids the alias: it has twice resolved to a
+   *different project's* instance sharing the hostname `gpu-rtx-hpo-west`, once
+   producing a false data-loss report. An earlier revision of this very line
+   used the alias.
 2. Deps go in the **same** `torch211_cu128_inference` env (already done
    2026-07-25; only needed on a fresh VM):
    `pip install pytz PyQt5 bs4 wget astropy` **plus** conda-only
@@ -179,10 +265,13 @@ its `find -type d` does not follow symlinks, so a staging dir of symlinks finds
 nothing. Loop `run_sds_from_rasters.py` over an explicit glob instead — pattern
 in the runbook.
 
-⚠️ Site traps: **TRUCVERT and TORREYPINES** both need
-`--no-min-chainage-length` (Trucvert → empty transect set; Torreypines →
-`No matched points` at every threshold, after shorelines extract fine). DUCK
-needs `--keep-top-k 999` (else whole-run fail). NARRABEEN needs nothing.
+⚠️ Site traps — **now enforced by the scorer** (`sds_core.SITE_REQUIRED_FLAGS`,
+validated in `run_sds_from_rasters.main()`; a violation is a `p.error` naming the
+missing flag, overridable with `--i-know-this-site-needs-flags`):
+**TRUCVERT and TORREYPINES** both need `--no-min-chainage-length` (Trucvert →
+empty transect set; Torreypines → `No matched points` at every threshold, after
+shorelines extract fine). DUCK needs `--keep-top-k 999` (else whole-run fail).
+NARRABEEN needs nothing.
 
 General rule behind the min-chainage flag: it drops transects with fewer than
 **30 timesteps**, so **any site with under ~30 staged scenes trips it** —

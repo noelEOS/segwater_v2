@@ -35,6 +35,10 @@ SIBLINGS = [
 SPEC_DIRS = [
     REPO / "scripts" / "evaluation" / "vm" / "specs",
     REPO / "scripts" / "evaluation" / "vm" / "analysis" / "configs",
+    # ship/ keeps its campaign spec next to its generators rather than in specs/;
+    # its `glob:` patterns must join the backward-compat harvest below or the
+    # ship campaign's run-dir resolution goes untested.
+    REPO / "scripts" / "evaluation" / "vm" / "ship",
 ]
 
 

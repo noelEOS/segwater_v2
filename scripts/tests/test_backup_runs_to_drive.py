@@ -241,5 +241,27 @@ def main() -> int:
         shutil.rmtree(tmp, ignore_errors=True)
 
 
+def test_backup_selftest() -> None:
+    """Pytest wrapper so the harness above is COLLECTED coverage, not folklore.
+
+    This file predates `testpaths = tests scripts/tests` (pytest.ini) and is a
+    `main()`-style harness: pytest collected ZERO tests from it, so 40-odd
+    assertions — including the 2026-07-19 manifest-truncation regression — only
+    ran when someone remembered to invoke the file by hand. The wrapper adds no
+    new coverage; it makes the existing coverage automatic.
+
+    The harness prints its own PASS/FAIL lines and returns 1 on any failure;
+    run pytest with `-s` (or read the captured stdout on failure) to see which
+    check failed. Globals are reset so a second call in one session is clean.
+    """
+    global PASS, FAIL
+    PASS = FAIL = 0
+    if shutil.which("zstd") is None:
+        import pytest
+        pytest.skip("`zstd` binary not on PATH (same requirement as the script)")
+    rc = main()
+    assert rc == 0, f"{FAIL} of {PASS + FAIL} harness checks failed (see stdout)"
+
+
 if __name__ == "__main__":
     sys.exit(main())

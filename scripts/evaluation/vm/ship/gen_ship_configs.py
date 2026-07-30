@@ -40,9 +40,17 @@ Usage:
 from __future__ import annotations
 
 import argparse
-import hashlib
 import sys
 from pathlib import Path
+
+# Shared kit modules (stdlib-only, no editable install needed). Checkpoint
+# resolution and the sha256/distinctness guard live in ckptsel (the local sha256
+# helper is gone -- ckptsel.assert_distinct_weights hashes and compares in one
+# call); the sweep-name prefix-collision rule lives in naming. One implementation,
+# one test each.
+sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+import ckptsel  # noqa: E402
+from naming import NameCollisionError, require_no_prefix_collisions  # noqa: E402
 
 SEEDS = ["s19", "s42", "s58"]
 VARIANTS = ["best", "last"]
@@ -131,34 +139,17 @@ HEADER = """\
 """
 
 
-def sha256(p: Path) -> str:
-    h = hashlib.sha256()
-    with open(p, "rb") as f:
-        for chunk in iter(lambda: f.read(1 << 20), b""):
-            h.update(chunk)
-    return h.hexdigest()
-
-
 def resolve_ckpt(seed: str, variant: str) -> Path:
+    """Resolve one arm's checkpoint via ckptsel, keeping this script's SystemExit
+    contract (every failure here is a clean refusal before any GPU time)."""
     d = STAGE2 / seed
     if not d.is_dir():
         raise SystemExit("missing seed dir: %s" % d)
-    if variant == "best":
-        link = d / "best.pth"
-        if not link.exists():
-            raise SystemExit("%s: no best.pth symlink" % seed)
-        p = link.resolve()
-        if p.name.endswith("_last.pth"):
-            raise SystemExit("%s: best.pth points at a _last checkpoint (%s)" % (seed, p.name))
-    else:
-        hits = sorted(d.glob("*_last.pth"))
-        if len(hits) != 1:
-            raise SystemExit("%s: expected 1 *_last.pth, found %d: %s"
-                             % (seed, len(hits), [h.name for h in hits]))
-        p = hits[0]
-    if "_%s_" % seed not in p.name:
-        raise SystemExit("%s/%s: filename does not carry _%s_ -- mis-copied checkpoint? %s"
-                         % (seed, variant, seed, p.name))
+    try:
+        p = ckptsel.resolve_best(d) if variant == "best" else ckptsel.resolve_last(d)
+        ckptsel.require_seed_token(p, seed)
+    except ckptsel.CkptSelError as exc:
+        raise SystemExit("%s/%s: %s" % (seed, variant, exc)) from exc
     return p
 
 
@@ -217,33 +208,33 @@ def main() -> None:
     a = ap.parse_args()
 
     # --- resolve + audit every arm BEFORE writing anything --------------------
-    arms, digests = {}, {}
+    # One dict, ONE key type ("<seed>/<variant>"). It used to be double-keyed with
+    # both a tuple and a string per arm, which made len(arms) twice the arm count
+    # and left the duplicate-weights message indexing the wrong key shape.
+    # ckptsel.assert_distinct_weights now owns the digest/collision logic.
+    arms = {}
     for seed in SEEDS:
         for variant in VARIANTS:
-            p = resolve_ckpt(seed, variant)
-            d = sha256(p)
-            if d in digests:
-                raise SystemExit(
-                    "DUPLICATE WEIGHTS: %s/%s and %s share sha256 %s\n  %s\n  %s"
-                    % (seed, variant, digests[d], d[:16], p.name, arms[digests[d]][0].name))
-            digests[d] = "%s/%s" % (seed, variant)
-            arms[(seed, variant)] = (p, d)
-            arms["%s/%s" % (seed, variant)] = (p, d)
+            arms["%s/%s" % (seed, variant)] = resolve_ckpt(seed, variant)
+    try:
+        digests = ckptsel.assert_distinct_weights(arms)
+    except ckptsel.CkptSelError as exc:
+        raise SystemExit(str(exc)) from exc
 
-    print("=== ARMS (%d) ===" % (len(SEEDS) * len(VARIANTS)))
+    print("=== ARMS (%d) ===" % (len(arms)))
     for seed in SEEDS:
         for variant in VARIANTS:
-            p, d = arms[(seed, variant)]
-            print("  %-3s %-4s  %s  %s" % (seed, variant, d[:16], p.name))
+            key = "%s/%s" % (seed, variant)
+            print("  %-3s %-4s  %s  %s" % (seed, variant, digests[key][:16], arms[key].name))
     print("=== sha256 DISTINCTNESS: %d distinct / %d arms  OK ==="
-          % (len(digests), len(SEEDS) * len(VARIANTS)))
+          % (len(set(digests.values())), len(arms)))
 
     # --- write configs -------------------------------------------------------
     n = 0
     for gate, g in GATES.items():
         for seed in SEEDS:
             for variant in VARIANTS:
-                ckpt = arms[(seed, variant)][0]
+                ckpt = arms["%s/%s" % (seed, variant)]
                 if g["split_by_stride"]:
                     for s in g["strides"]:
                         name = "%s_ship_%s_%s_s%d" % (gate, seed, variant, s)
@@ -258,12 +249,15 @@ def main() -> None:
     print("=== WROTE %d sweep configs under %s ===" % (n, a.out_root))
 
     # --- no sweep name may prefix another ------------------------------------
+    # naming.require_no_prefix_collisions is the one implementation of this rule
+    # (a bare `<name>_*` glob would match both members of a colliding pair). Its
+    # message already lists every pair, so the old per-pair stderr loop is gone;
+    # the exit-non-zero-naming-the-pairs behavior is preserved.
     names = sorted(p.stem for p in a.out_root.rglob("*.yaml"))
-    bad = [(x, y) for x in names for y in names if x != y and y.startswith(x + "_")]
-    if bad:
-        for x, y in bad:
-            print("  PREFIX COLLISION: %s  <=  %s" % (x, y), file=sys.stderr)
-        raise SystemExit("sweep names must not prefix one another")
+    try:
+        require_no_prefix_collisions(names, what="sweep name")
+    except NameCollisionError as exc:
+        raise SystemExit(str(exc)) from exc
     print("=== NAME COLLISION CHECK: %d names, no prefixes  OK ===" % len(names))
 
 

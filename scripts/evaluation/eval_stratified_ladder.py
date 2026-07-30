@@ -40,18 +40,16 @@ import torch.nn.functional as F
 from src.data.datamodule import CoastalDataModule
 from src.models.factory import SegmentationModelFactory
 
-# Filename role parsing. Order matters: _last / _snap before the generic _miou.
+# Shared role classification (one implementation) -- see scripts/evaluation/vm/ckptsel.py.
+sys.path.insert(0, str(Path(__file__).resolve().parent / "vm"))
+from ckptsel import role_of  # noqa: E402,F401
+
+# DELIBERATELY LOCAL and DISTINCT from ckptsel.STEP_RE (`step(\d+)`): this ladder
+# requires the UNDERSCORE-ANCHORED form, so a name must carry a `_step<N>_` token
+# to be a ladder rung at all -- `discover()` skips (with a notice) anything that
+# does not match. Loosening this to ckptsel.STEP_RE would silently admit rungs
+# whose step position in the filename is not the trainer's. Do not merge them.
 STEP_RE = re.compile(r"_step(\d+)_")
-
-
-def role_of(name: str) -> str:
-    if name.endswith("_last.pth"):
-        return "last"
-    if "_snap_" in name:
-        return "snap"
-    if "_miou" in name:
-        return "best"  # a retained top-k checkpoint
-    return "other"
 
 
 def resolve_seed_dir(ckpt_root: Path, seed: str) -> Path:

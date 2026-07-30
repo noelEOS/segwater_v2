@@ -70,7 +70,15 @@ def main():
                         stride=a.stride, slope_ha_yr=s, hac_se=se,
                         ci_lo=lo, ci_hi=hi, maxlags=lags, n=len(sub)))
     t = pd.DataFrame(out).sort_values(["variant", "seed"])
-    p = OUT_DIR/("demak_full_ship_trend_s%d.csv" % a.stride)
+    # Carry the input's arm-set tag through to the output. A subset run
+    # (e.g. areas_swa5_s112.csv) must NOT overwrite the full-campaign
+    # trend table -- it did once, and only the Mac mirror saved it.
+    stem = Path(a.area_csv).stem            # demak_full_ship_areas[_tag]_s112
+    tag = ""
+    if stem.startswith("demak_full_ship_areas") and stem.endswith("_s%d" % a.stride):
+        mid = stem[len("demak_full_ship_areas"):-len("_s%d" % a.stride)]
+        tag = mid  # "" for the default set, "_swa5" etc. otherwise
+    p = OUT_DIR/("demak_full_ship_trend%s_s%d.csv" % (tag, a.stride))
     p.parent.mkdir(parents=True, exist_ok=True)
     t.to_csv(p, index=False)
     print("\nwrote %s (%d rows)" % (p, len(t)))

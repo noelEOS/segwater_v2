@@ -121,12 +121,12 @@ def main():
         print("  %-10s %3d scenes  %-24s %s" % (arm, len(scenes), enc, ck.split("/")[-1][:52]))
     df = pd.DataFrame(rows).sort_values(["arm", "datetime"])
     df.to_csv(out, index=False)
-    print("\nwrote %s (%d rows = %d arms x 213)" % (out, len(df), len(ARMS)))
+    print("\nwrote %s (%d rows = %d arms x 213)" % (out, len(df), len(arms)))
     for arm in arms:
         n_win = int(df[df.arm == arm].in_analysis_window.sum())
         assert n_win == 206, "%s: in-window %d != 206" % (arm, n_win)
         print("  %-10s in analysis window: %d" % (arm, n_win))
-    print("distinct checkpoints: %d / %d arms" % (len(seen), len(ARMS)))
+    print("distinct checkpoints: %d / %d arms" % (len(seen), len(arms)))
 
 
 if __name__ == "__main__":

@@ -50,6 +50,7 @@ from pathlib import Path
 __all__ = [
     "RunDirError",
     "TIMESTAMP_RE",
+    "TIMESTAMP_PATTERN",
     "run_dir_regex",
     "resolve_run_dirs",
     "resolve_run_dir",
@@ -58,6 +59,11 @@ __all__ = [
 
 #: The UTC stamp emitted by ``run_inference_sweep.timestamp_id()``.
 TIMESTAMP_RE = r"\d{8}T\d{6}Z"
+
+#: Compiled form, for callers that need to ``search`` a dir name for its stamp
+#: (positional ``name.split("_")[i]`` indexing silently breaks when a preset
+#: changes the underscore count — search for the stamp instead).
+TIMESTAMP_PATTERN = re.compile(TIMESTAMP_RE)
 
 
 class RunDirError(Exception):

@@ -8,26 +8,77 @@ to the threshold sweep's 0.01 step, and how many pixels actually flip their
 Run-dir matching is anchored on the _<UTC timestamp>_ that follows the sweep
 name, so a baseline prefix cannot swallow its own _PERF sibling, and a
 --base-ts / --perf-ts pin resolves the case where several baseline runs exist.
+The anchoring itself lives in ``scripts/evaluation/vm/runsel.py`` -- this module
+used to carry its own copy of the same regex.
 """
+from __future__ import annotations
+
 import argparse
-import glob
 import os
-import re
+import sys
+from pathlib import Path
 
 import numpy as np
-import rasterio
 
-RUNS = "/home/noel/segwater_v2/outputs/inference/runs"
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
+from runsel import RunDirError, resolve_run_dirs  # noqa: E402
+
+DEFAULT_RUNS_ROOT = "/home/noel/segwater_v2/outputs/inference/runs"
 
 
-def find(prefix, ts=None):
-    pat = re.compile(r"^" + re.escape(prefix) + r"_(\d{8}T\d{6}Z)_")
-    out = []
-    for d in sorted(glob.glob(os.path.join(RUNS, prefix + "_*"))):
-        m = pat.match(os.path.basename(d))
-        if os.path.isdir(d) and m and (ts is None or m.group(1) == ts):
-            out.append(d)
-    return out
+def find(runs_root, prefix, ts=None):
+    """Run dirs for sweep ``prefix``, optionally pinned to one UTC timestamp.
+
+    Thin wrapper over :func:`runsel.resolve_run_dirs` returning ``str`` paths,
+    which is what the raster-diff body below consumes.
+    """
+    return [str(d) for d in resolve_run_dirs(runs_root, prefix, timestamp=ts)]
+
+
+def resolve_pair(runs_root, base_prefix, perf_prefix, base_ts=None, perf_ts=None):
+    """Resolve baseline and perf run dirs, or report why we cannot.
+
+    Returns ``(b_dirs, p_dirs, problem)``. ``problem`` is ``None`` on success,
+    otherwise a human-readable string the caller prints before continuing --
+    the historical print-and-continue behavior, kept so a bad prefix in a batch
+    of comparisons does not abort the rest.
+    """
+    try:
+        b_dirs = find(runs_root, base_prefix, base_ts)
+        p_dirs = find(runs_root, perf_prefix, perf_ts)
+    except RunDirError as e:
+        return [], [], str(e)
+    return b_dirs, p_dirs, None
+
+
+def duplicate_strides(b_dirs):
+    """Baseline dirs sharing a stride suffix, keyed by that suffix.
+
+    More than one baseline run for a stride means the comparison is ambiguous;
+    the caller reports it and asks for a --base-ts pin.
+    """
+    by_stride = {}
+    for d in b_dirs:
+        by_stride.setdefault(d.rsplit("_", 1)[-1], []).append(d)
+    return {k: v for k, v in by_stride.items() if len(v) > 1}
+
+
+def scene_stats(b, p):
+    """Per-scene (max|d|, mean|d|, flip fraction) for one run-dir pair."""
+    import rasterio
+
+    stats = []
+    for s in sorted(os.listdir(b)):
+        fb = os.path.join(b, s, s + "_probability_water.tif")
+        fp = os.path.join(p, s, s + "_probability_water.tif")
+        if not (os.path.exists(fb) and os.path.exists(fp)):
+            continue
+        with rasterio.open(fb) as db, rasterio.open(fp) as dp:
+            x = db.read(1).astype(np.float64)
+            y = dp.read(1).astype(np.float64)
+        d = np.abs(x - y)
+        stats.append((d.max(), d.mean(), np.mean((x > 0.5) != (y > 0.5))))
+    return stats
 
 
 def main():
@@ -37,14 +88,18 @@ def main():
     ap.add_argument("label")
     ap.add_argument("--base-ts", default=None, help="pin baseline UTC timestamp")
     ap.add_argument("--perf-ts", default=None, help="pin perf UTC timestamp")
+    ap.add_argument("--runs-root", default=DEFAULT_RUNS_ROOT,
+                    help="inference runs root (default: %(default)s)")
     a = ap.parse_args()
 
-    b_dirs, p_dirs = find(a.base_prefix, a.base_ts), find(a.perf_prefix, a.perf_ts)
+    b_dirs, p_dirs, problem = resolve_pair(
+        a.runs_root, a.base_prefix, a.perf_prefix, a.base_ts, a.perf_ts
+    )
+    if problem:
+        print("%s: cannot resolve run dirs, skip\n  %s" % (a.label, problem))
+        return
     print("%s: %d baseline dir(s), %d perf dir(s)" % (a.label, len(b_dirs), len(p_dirs)))
-    by_stride = {}
-    for d in b_dirs:
-        by_stride.setdefault(d.rsplit("_", 1)[-1], []).append(d)
-    dupes = {k: v for k, v in by_stride.items() if len(v) > 1}
+    dupes = duplicate_strides(b_dirs)
     if dupes:
         print("  NOTE: >1 baseline run for a stride; pin with --base-ts:")
         for k, v in sorted(dupes.items()):
@@ -59,18 +114,12 @@ def main():
             print("  %s: %d perf match, skip" % (stride, len(cand)))
             continue
         p = cand[0]
-        assert os.path.basename(b) != os.path.basename(p), "self-comparison"
-        stats = []
-        for s in sorted(os.listdir(b)):
-            fb = os.path.join(b, s, s + "_probability_water.tif")
-            fp = os.path.join(p, s, s + "_probability_water.tif")
-            if not (os.path.exists(fb) and os.path.exists(fp)):
-                continue
-            with rasterio.open(fb) as db, rasterio.open(fp) as dp:
-                x = db.read(1).astype(np.float64)
-                y = dp.read(1).astype(np.float64)
-            d = np.abs(x - y)
-            stats.append((d.max(), d.mean(), np.mean((x > 0.5) != (y > 0.5))))
+        if os.path.basename(b) == os.path.basename(p):
+            raise SystemExit(
+                "self-comparison: baseline and perf resolved to the same run dir %r"
+                % os.path.basename(b)
+            )
+        stats = scene_stats(b, p)
         if not stats:
             print("  %s: no comparable scenes" % stride)
             continue

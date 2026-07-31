@@ -123,7 +123,7 @@ tempted to re-document one of these as a manual step, look at the code first.
 |---|---|
 | The repo must be pip-installed **editable** (else sweeps exit 0 doing nothing) | `check_inputs.sh` → `chk_import` in the `common` block, run from a subshell `cd /tmp` so cwd cannot mask it. Also checks `cv2` (common) and `sklearn` (demak). |
 | A run is complete only at its **expected scene count** | `completion.EXPECTED_SCENES` + `python completion.py --gate <g> --check DIR...` (exit 1 if any short). Counts `*/*_probability_water.tif`, excluding AppleDouble `._*` stubs. `--print-expected` feeds the shell so no second copy of the numbers exists. |
-| **Per-site SDS flags** (Duck `--keep-top-k 999`; Trucvert / Torrey Pines `--no-min-chainage-length`) | `sds_core.SITE_REQUIRED_FLAGS` + validation in `run_sds_from_rasters.main()`, which `p.error`s naming the missing flag. Override: `--i-know-this-site-needs-flags`. Deliberately a **validation error, not an auto-applied default** — auto-defaults would change the estimand of an already-logged command. Lives in the `SDS_Benchmark_slim/` **nested** repo (commit `42c3167`). |
+| **Per-site SDS flags** (Duck `--keep-top-k 999`; Trucvert / Torrey Pines `--no-min-chainage-length`) | `sds_core.SITE_REQUIRED_FLAGS` + validation in `run_sds_from_rasters.main()`, which `p.error`s naming the missing flag. Override: `--i-know-this-site-needs-flags`. Deliberately a **validation error, not an auto-applied default** — auto-defaults would change the estimand of an already-logged command. Lives in the `SDS_Benchmark_slim/` **nested** repo (`SITE_REQUIRED_FLAGS` added in `0c788c7`; the `run_sds_from_rasters` hardening in `42c3167`). |
 | No **sweep name may prefix another** (else every later run-dir lookup is ambiguous) | `naming.require_no_prefix_collisions`, called by `ship/gen_ship_configs.py` over the generated config stems. This is the generation-time half of the rule; `runsel` is the read-time half. |
 | **best/last checkpoint resolution** | `ckptsel.resolve_best` (the `best.pth` symlink only — never glob `*_pmwiou*.pth`; refuses a target ending `_last.pth`) and `ckptsel.resolve_last` (exactly one `*_last.pth`). Adopted by `ensure_best_ckpts.py`, `relink_best_ckpts.py`, `eval_stratified_ladder.py`, `build_swa_checkpoint.py`, `ship/gen_ship_configs.py`. |
 | **Run-dir resolution** — never a bare prefix glob, never `hits[0]` / `head -1` | `runsel.resolve_run_dir` / `resolve_run_dirs(expect=)` / `resolve_glob_spec`, anchored on the `_<UTC stamp>_`. |
@@ -186,9 +186,16 @@ cannot track files inside it. Consequences:
   git -C ~/SDS_Benchmark_slim rev-parse --short HEAD
   ```
 
-  The site-flag validation and non-zero-exit hardening are commit `42c3167`
-  (2026-07-30); results produced before it ran under the old
-  exit-0-on-failed-extraction behaviour.
+  The non-zero-exit hardening is commit `42c3167` (2026-07-30); results
+  produced before it ran under the old exit-0-on-failed-extraction behaviour.
+  `sds_core.SITE_REQUIRED_FLAGS` landed later, in `0c788c7` (2026-07-31).
+
+  ⚠️ **The two copies of this tree diverged.** The Mac held `42c3167` while the
+  VM held the same changes only as *uncommitted working-tree edits* on top of
+  `5c04772`. Both are now committed with byte-identical content — Mac `0c788c7`,
+  VM `cae0805` — but the hashes differ because the histories do. Record the hash
+  of the copy that actually ran the scoring, and check `git status` in BOTH
+  before trusting either.
 - **Edits go in the slim tree only** — never in
   `SDS_Benchmark-0.0-reproducidibility/`, which is the untouched upstream
   reproducibility tree.

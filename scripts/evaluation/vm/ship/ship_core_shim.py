@@ -43,15 +43,26 @@ SCENE_RE = re.compile(r"^S1_(\d{8})_(\d{6})_(.+)$")
 # The orbit-127 scene excluded a priori by every registered Demak product.
 A_PRIORI_EXCLUSIONS = {"S1_20250730_105715_127_1_1"}
 
-_CFG: dict = {"variant": None, "stride": None}
+_CFG: dict = {"variant": None, "stride": None, "tag": "ship"}
 
 
-def configure(variant: str, stride: int) -> None:
+def configure(variant: str, stride: int, tag: str = "ship") -> None:
+    """Select the (variant, stride) cell and the CAMPAIGN whose run dirs to read.
+
+    ``tag`` defaults to ``ship`` (the Swin-B campaign) so existing callers are
+    unaffected. It is the middle token of the sweep name, and is the only thing
+    separating one lineage's run dirs from another's on a shared runs root --
+    ``demak_full_ship_s42_last_s32`` vs ``demak_full_cnxb_s42_last_s32`` vs
+    ``..._cnxt_...``. Checkpoint FILENAMES collide across all three, so the tag
+    cannot be inferred from the checkpoint.
+    """
     if variant not in ("best", "last"):
         raise ValueError("variant must be best|last, got %r" % variant)
     if stride not in (32, 112):
         raise ValueError("stride must be 32|112, got %r" % stride)
-    _CFG.update(variant=variant, stride=stride)
+    if not tag:
+        raise ValueError("tag must be a non-empty campaign tag")
+    _CFG.update(variant=variant, stride=stride, tag=tag)
 
 
 def run_dir(seed: str) -> Path:
@@ -63,7 +74,8 @@ def run_dir(seed: str) -> Path:
     """
     if _CFG["variant"] is None:
         raise RuntimeError("call configure(variant, stride) first")
-    name = "demak_full_ship_%s_%s_s%d" % (seed, _CFG["variant"], _CFG["stride"])
+    name = "demak_full_%s_%s_%s_s%d" % (
+        _CFG["tag"], seed, _CFG["variant"], _CFG["stride"])
     return resolve_run_dir(RUNS, name)
 
 

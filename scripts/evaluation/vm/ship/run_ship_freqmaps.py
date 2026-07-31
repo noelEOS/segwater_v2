@@ -38,7 +38,12 @@ HOME = Path.home()
 LAND_MASK_TIF = HOME / "ancillary/demak_semarang/aoi/GSHHG_mask.tif"
 S2_DIR = HOME / "ancillary/demak_semarang/s2_timeseries_demak"
 S2_TS = HOME / "proxy17_analysis/s2_voteveto_timeseries.csv"
-OUT_DIR = HOME / "workspace/results/ship_decision_2026-07/freq_maps"
+# Default reproduces the Swin-B `ship` campaign; --out-dir/--tag redirect it.
+DEFAULT_OUT_DIR = HOME / "workspace/results/ship_decision_2026-07/freq_maps"
+# Campaign tag -> lineage slug for the `lineage` column. The slug, not the
+# tag, is what makes a row poolable: checkpoint filenames collide across all
+# three lineages, so `dataset=` alone is never sufficient provenance.
+LINEAGE_BY_TAG = {"ship": "mx630s2", "cnxb": "mx630s2cnx", "cnxt": "mx630s2cnxt"}
 
 THR = 0.5
 GATE = 0.9
@@ -134,10 +139,28 @@ def main():
     ap = argparse.ArgumentParser(description=__doc__)
     ap.add_argument("--variant", required=True, choices=("best", "last"))
     ap.add_argument("--stride", required=True, type=int, choices=(32, 112))
+    ap.add_argument("--tag", default="ship",
+                    help="campaign tag whose run dirs to read (default: "
+                         "%(default)s). Must match the middle token of the "
+                         "sweep names, e.g. ship|cnxb|cnxt.")
+    ap.add_argument("--lineage", default=None,
+                    help="lineage slug for the `lineage` column; defaults to the "
+                         "slug registered for --tag. MUST differ between lineages "
+                         "whose checkpoint filenames collide.")
+    ap.add_argument("--out-dir", type=Path, default=None,
+                    help="results dir (default: %s)" % DEFAULT_OUT_DIR)
     a = ap.parse_args()
-    shim.configure(a.variant, a.stride)
+    lineage = a.lineage or LINEAGE_BY_TAG.get(a.tag)
+    if lineage is None:
+        raise SystemExit(
+            "unknown campaign tag %r: pass --lineage explicitly, or add it to "
+            "LINEAGE_BY_TAG. Refusing to guess -- a wrong lineage slug is how "
+            "two lineages get silently pooled." % a.tag)
+    shim.configure(a.variant, a.stride, tag=a.tag)
+    OUT_DIR = a.out_dir or DEFAULT_OUT_DIR
     tag = "%s_s%d" % (a.variant, a.stride)
     OUT_DIR.mkdir(parents=True, exist_ok=True)
+    print("=== campaign %s / lineage %s -> %s ===" % (a.tag, lineage, OUT_DIR))
 
     audit = shim.audit()
     print("=== provenance (%s) ===" % tag)
@@ -155,7 +178,7 @@ def main():
 
     rows = []
     def add(metric, value, pair="S2 vs S1"):
-        rows.append(dict(lineage="mx630s2", variant=a.variant, stride=a.stride,
+        rows.append(dict(lineage=lineage, variant=a.variant, stride=a.stride,
                          pair=pair, metric=metric, value=value))
 
     # --- full-period frequency agreement --------------------------------

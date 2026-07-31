@@ -10,12 +10,41 @@ mx630_stage2 campaign rasters, keeping every constant that defines it:
     gain/loss = |dfreq| > 0.5 between epoch means
     30 m tolerance (3 S2 px) for the coverage metric
 
-⚠️ **Lineage.** The 20 registered CITABLE rows were computed on a CHIP-BASED S1
-model. These rows are mx630_stage2. They are a COMPARISON, never a drop-in
-replacement, and every output row carries `lineage`, `variant` and `stride`.
+⚠️ **Lineage.** The 20 registered rows (18 CITABLE) in
+`experiments/demak_semarang/results_registry/` were computed on a DIFFERENT S1
+model from these campaign arms. They are a COMPARISON, never a drop-in
+replacement, and every output row carries `lineage`, `variant`, `stride` and
+`scene_set` so the two can never be pooled by accident.
+
+THREE SCENE SETS — pick the one matching the registered row you compare against
+------------------------------------------------------------------------------
+``--scene-set allscenes`` (DEFAULT)
+    All 213 orbit-76 S1 scenes, no window restriction, epochs from the S1 date.
+    This is what the script did before the scene-set flag existed; it is the
+    default so every previously-written `freq_stats_<variant>_s<stride>.csv`
+    stays reproducible. It corresponds to **no** registered row exactly.
+
+``--scene-set samewin``
+    The **186** orbit-76 scenes inside the S2 date span (2017-08-22 →
+    2024-10-29), weight 1, epochs from the S1 date. This is the registry's
+    **unmatched-calendars** comparison (registered gain IoU **0.37**).
+
+``--scene-set matched``
+    The nearest S1 scene to each S2 date -- one row per S2 date, so a scene
+    matched twice carries weight 2 -- with epochs from the **S2** date. Removes
+    the acquisition-calendar difference between sensors and is the registry's
+    **PRIMARY** comparison (registered gain IoU **0.40**). Verified to
+    reproduce the registry's sampling: **53 unique S1 scenes for 78 S2 dates,
+    median |dt| 3.8 d**.
+
+⚠️ These are three different estimands. Comparing an `allscenes` or `samewin`
+number against the registered 0.40, or a `matched` number against 0.37, mixes
+them. The scene set is in the output filename and in a `scene_set` column for
+exactly this reason.
 
 Usage:
     python run_ship_freqmaps.py --variant last --stride 32
+    python run_ship_freqmaps.py --variant last --stride 32 --scene-set matched
 """
 
 from __future__ import annotations
@@ -113,26 +142,88 @@ def s2_freq(scenes, shape, win):
     return out
 
 
-def s1_freq(shape, win):
-    """3-seed median of per-seed P>THR frequency, for full / early / late."""
-    per_seed = {"full": [], "early": [], "late": []}
-    for seed in shim.SEEDS:
-        idx = shim.scene_index(seed)
+def s1_scene_plan(scene_set: str, s2s):
+    """Which S1 scenes contribute, with what multiplicity, per epoch part.
+
+    Replicates the two scene sets of the registered
+    ``11_s2_frequency_maps.py``. Returns ``{part: {scene_id: weight}}``.
+
+    ``samewin`` -- every orbit-76 S1 scene inside the S2 date span, weight 1,
+        epochs taken from the S1 date. This is a *same-window* reference: it
+        answers "what does S1 see over the same period", and it is what the
+        registry calls the **unmatched-calendars** comparison.
+
+    ``matched`` -- the nearest S1 scene to EACH S2 date (one row per S2 date,
+        so a scene matched by two S2 dates carries weight 2), with epochs taken
+        from the **S2** date, not the S1 date. This is the registry's
+        **calendar-matched** comparison and its PRIMARY gain-IoU row, because it
+        removes the acquisition-calendar difference between the sensors.
+
+    ⚠️ The two are different estimands and their numbers are NOT interchangeable
+    -- in the registry, gain IoU is 0.40 matched vs 0.37 unmatched.
+    """
+    idx = shim.scene_index(shim.SEEDS[0])[["scene_id", "datetime"]]
+    if scene_set == "allscenes":
         yr = idx.datetime.dt.year
         sel = {"full": np.ones(len(idx), bool),
                "early": yr.between(*EPOCH_EARLY).values,
                "late": yr.between(*EPOCH_LATE).values}
-        acc = {k: np.zeros(shape, np.float64) for k in sel}
-        for i, r in enumerate(idx.itertuples()):
-            with rasterio.open(r.tif) as ds:
+        frame = idx
+    elif scene_set == "samewin":
+        t0, t1 = s2s.datetime.min(), s2s.datetime.max()
+        sw = idx[(idx.datetime >= t0) & (idx.datetime <= t1)].copy()
+        yr = sw.datetime.dt.year
+        sel = {"full": np.ones(len(sw), bool),
+               "early": yr.between(*EPOCH_EARLY).values,
+               "late": yr.between(*EPOCH_LATE).values}
+        frame = sw
+    elif scene_set == "matched":
+        s1t = idx.datetime.values
+        j = np.array([np.abs(s1t - np.datetime64(d)).argmin()
+                      for d in s2s.datetime])
+        dt_days = (np.abs(s1t[j] - s2s.datetime.values.astype("datetime64[ns]"))
+                   / np.timedelta64(1, "D"))
+        frame = idx.iloc[j].reset_index(drop=True)
+        s2yr = s2s.datetime.dt.year.values
+        sel = {"full": np.ones(len(frame), bool),
+               "early": pd.Series(s2yr).between(*EPOCH_EARLY).values,
+               "late": pd.Series(s2yr).between(*EPOCH_LATE).values}
+        print("S1 matched: %d unique scenes for %d S2 dates; |dt| median %.1f d, "
+              "max %.1f d" % (frame.scene_id.nunique(), len(frame),
+                              float(np.median(dt_days)), float(dt_days.max())))
+    else:
+        raise ValueError("scene_set must be allscenes|samewin|matched, got %r"
+                         % scene_set)
+
+    plan, counts = {}, {}
+    for part, m in sel.items():
+        sub = frame.loc[m]
+        if len(sub):
+            # multiplicity: a scene matched by two S2 dates contributes twice
+            plan[part] = sub.groupby("scene_id").size().to_dict()
+            counts[part] = int(m.sum())
+    return plan, counts
+
+
+def s1_freq(shape, win, scene_set, s2s):
+    """3-seed median of per-seed weighted P>THR frequency, per epoch part."""
+    plan, counts = s1_scene_plan(scene_set, s2s)
+    needed = sorted({sid for p in plan.values() for sid in p})
+    per_seed = {k: [] for k in plan}
+    for seed in shim.SEEDS:
+        idx = shim.scene_index(seed).set_index("scene_id")
+        acc = {k: np.zeros(shape, np.float64) for k in plan}
+        for sid in needed:
+            with rasterio.open(idx.loc[sid, "tif"]) as ds:
                 w = ds.read(1, window=win) > THR
-            for k, m in sel.items():
-                if m[i]:
-                    acc[k] += w
-        for k, m in sel.items():
-            per_seed[k].append((acc[k] / max(int(m.sum()), 1)).astype(np.float32))
+            for k, p in plan.items():
+                if sid in p:
+                    acc[k] += p[sid] * w
+        for k in plan:
+            denom = max(sum(plan[k].values()), 1)
+            per_seed[k].append((acc[k] / denom).astype(np.float32))
     return ({k: np.median(np.stack(v), axis=0) for k, v in per_seed.items()},
-            {k: int(m.sum()) for k, m in sel.items()})
+            counts)
 
 
 def main():
@@ -147,6 +238,18 @@ def main():
                     help="lineage slug for the `lineage` column; defaults to the "
                          "slug registered for --tag. MUST differ between lineages "
                          "whose checkpoint filenames collide.")
+    ap.add_argument("--scene-set", default="allscenes",
+                    choices=("allscenes", "samewin", "matched"),
+                    help="S1 scene set. `allscenes` = all 213 orbit-76 scenes, "
+                         "no window restriction -- what this script did before "
+                         "the scene-set flag existed, kept as the DEFAULT so "
+                         "prior outputs stay reproducible. `samewin` = the 186 "
+                         "scenes inside the S2 date span (the registry's "
+                         "UNMATCHED-calendars comparison, gain IoU 0.37). "
+                         "`matched` = nearest S1 scene per S2 date, epochs from "
+                         "the S2 date (the registry's PRIMARY calendar-matched "
+                         "comparison, gain IoU 0.40). Three different estimands "
+                         "-- never pool them. (default: %(default)s)")
     ap.add_argument("--out-dir", type=Path, default=None,
                     help="results dir (default: %s)" % DEFAULT_OUT_DIR)
     a = ap.parse_args()
@@ -158,7 +261,11 @@ def main():
             "two lineages get silently pooled." % a.tag)
     shim.configure(a.variant, a.stride, tag=a.tag)
     OUT_DIR = a.out_dir or DEFAULT_OUT_DIR
-    tag = "%s_s%d" % (a.variant, a.stride)
+    # The scene set is part of the filename: a `matched` run must NOT overwrite
+    # the `samewin` table -- they are different estimands, not two takes on one.
+    # `samewin` keeps the historical name so existing consumers are unaffected.
+    tag = "%s_s%d%s" % (a.variant, a.stride,
+                        "" if a.scene_set == "allscenes" else "_" + a.scene_set)
     OUT_DIR.mkdir(parents=True, exist_ok=True)
     print("=== campaign %s / lineage %s -> %s ===" % (a.tag, lineage, OUT_DIR))
 
@@ -173,12 +280,13 @@ def main():
     s2s = s2_scenes()
     print("S2 gated scenes: %d" % len(s2s))
     f2 = s2_freq(s2s, land.shape, win)
-    f1, n1 = s1_freq(land.shape, win)
+    f1, n1 = s1_freq(land.shape, win, a.scene_set, s2s)
     print("S1 scenes full/early/late: %s" % n1)
 
     rows = []
     def add(metric, value, pair="S2 vs S1"):
         rows.append(dict(lineage=lineage, variant=a.variant, stride=a.stride,
+                         scene_set=a.scene_set,
                          pair=pair, metric=metric, value=value))
 
     # --- full-period frequency agreement --------------------------------

@@ -91,18 +91,27 @@ def summarize_rejected(rejected):
 
 
 def check(entries, *, allowed=DEFAULT_ALLOWED, max_bytes=DEFAULT_MAX_BYTES,
-          override=False):
+          override=False, skip_non_whitelisted=False):
     """Apply the egress policy. Returns the allowed entries or raises.
 
     ``override`` corresponds to ``--i-know-this-is-heavy``: it permits the
     transfer but does NOT silence the report, so an override is always visible
     in the log of whoever ran it.
+
+    ``skip_non_whitelisted`` corresponds to ``--skip-non-whitelisted``: the
+    normal case for a results tree that legitimately holds heavy artifacts
+    alongside the CSVs (an SDS sweep dir is CSVs + thousands of ``.gpkg``). It
+    filters them out instead of refusing, which is SAFE -- rsync is already
+    driven by the whitelist, so the heavy files were never going to be pulled
+    either way. It does NOT relax the size cap, which still applies to the
+    whitelisted bytes. Distinct from ``override``, which actually permits heavy
+    egress.
     """
     ok, rejected = classify(entries, allowed)
     total_ok = sum(s for s, _ in ok)
     problems = []
 
-    if rejected:
+    if rejected and not skip_non_whitelisted:
         by_ext = summarize_rejected(rejected)
         detail = ", ".join(
             "%s x%d (%s)" % (ext, n, human(b))
@@ -177,9 +186,17 @@ def main() -> None:
     ap.add_argument("--max-bytes", type=int, default=DEFAULT_MAX_BYTES)
     ap.add_argument("--dry-run", action="store_true",
                     help="report what would transfer; move nothing")
+    ap.add_argument("--skip-non-whitelisted", action="store_true",
+                    help="filter out non-whitelisted files instead of refusing. "
+                         "Safe: rsync is whitelist-driven, so they were never "
+                         "going to transfer. Use for a results tree that holds "
+                         "heavy artifacts beside the CSVs (e.g. SDS sweeps). "
+                         "The size cap still applies to the whitelisted bytes.")
     ap.add_argument("--i-know-this-is-heavy", action="store_true",
                     dest="override",
-                    help="proceed despite a policy violation (still reported)")
+                    help="actually permit heavy egress despite a violation "
+                         "(still reported). NOT the same as "
+                         "--skip-non-whitelisted.")
     a = ap.parse_args()
 
     entries = remote_listing(a.host, a.remote)
@@ -188,8 +205,9 @@ def main() -> None:
 
     allowed = tuple(x if x.startswith(".") else "." + x for x in a.allow)
     try:
-        ok, rejected, total_ok = check(entries, allowed=allowed,
-                                       max_bytes=a.max_bytes, override=a.override)
+        ok, rejected, total_ok = check(
+            entries, allowed=allowed, max_bytes=a.max_bytes,
+            override=a.override, skip_non_whitelisted=a.skip_non_whitelisted)
     except EgressRefused as exc:
         print(str(exc), file=sys.stderr)
         raise SystemExit(2)
@@ -198,8 +216,9 @@ def main() -> None:
           % (len(entries), human(sum(s for s, _ in entries))))
     print("would pull  : %d file(s), %s" % (len(ok), human(total_ok)))
     if rejected:
-        print("EXCLUDED    : %d file(s), %s  (override in effect)"
-              % (len(rejected), human(sum(s for s, _ in rejected))))
+        why = "skipped" if a.skip_non_whitelisted else "override in effect"
+        print("EXCLUDED    : %d file(s), %s  (%s)"
+              % (len(rejected), human(sum(s for s, _ in rejected)), why))
         for ext, (n, b) in sorted(summarize_rejected(rejected).items(),
                                   key=lambda kv: -kv[1][1]):
             print("    %-14s x%-6d %s" % (ext, n, human(b)))

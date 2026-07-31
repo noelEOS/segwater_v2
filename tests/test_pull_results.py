@@ -130,3 +130,33 @@ def test_human_readable_sizes():
     assert human(512) == "512 B"
     assert human(2 * MB).startswith("2.0 MB")
     assert human(3 * GB).startswith("3.0 GB")
+
+
+def test_skip_non_whitelisted_filters_instead_of_refusing():
+    """The normal case: an SDS tree of CSVs + 14k .gpkg.
+
+    Filtering is safe because rsync is whitelist-driven -- the .gpkg were never
+    going to transfer. This flag only changes whether we refuse or proceed.
+    """
+    ok, rejected, total = check(sds_tree(), skip_non_whitelisted=True)
+    assert len(ok) == 18                      # the CSVs
+    assert len(rejected) == 14_094            # still reported, just not fatal
+    assert total == 18 * 4_000
+
+
+def test_skip_non_whitelisted_does_not_relax_the_size_cap():
+    """Filtering heavy files must not become a way to pull 500 MB of CSV."""
+    entries = [(60 * MB, "a.csv"), (60 * MB, "b.csv"), (3 * GB, "big.gpkg")]
+    with pytest.raises(EgressRefused) as exc:
+        check(entries, skip_non_whitelisted=True)
+    assert "cap" in str(exc.value)
+
+
+def test_skip_is_distinct_from_override():
+    """--skip filters; --override actually permits. They are not synonyms."""
+    entries = [(10, "a.csv"), (3 * GB, "big.gpkg")]
+    ok_skip, rej_skip, _ = check(entries, skip_non_whitelisted=True)
+    ok_ovr, rej_ovr, _ = check(entries, override=True)
+    # both proceed and both report the same rejection...
+    assert len(rej_skip) == len(rej_ovr) == 1
+    assert len(ok_skip) == len(ok_ovr) == 1

@@ -30,17 +30,33 @@ THREE SCENE SETS — pick the one matching the registered row you compare agains
     **unmatched-calendars** comparison (registered gain IoU **0.37**).
 
 ``--scene-set matched``
-    The nearest S1 scene to each S2 date -- one row per S2 date, so a scene
-    matched twice carries weight 2 -- with epochs from the **S2** date. Removes
-    the acquisition-calendar difference between sensors and is the registry's
-    **PRIMARY** comparison (registered gain IoU **0.40**). Verified to
-    reproduce the registry's sampling: **53 unique S1 scenes for 78 S2 dates,
-    median |dt| 3.8 d**.
+    The nearest S1 scene to each gated S2 date, kept only if within
+    ``MATCH_TOL`` (**±6 days**), **DEDUPLICATED** -- a scene matched by two S2
+    dates counts **once**. Epochs from the S1 date. Yields **48 unique S1
+    scenes** from the 78 gated S2 dates. Removes the acquisition-calendar
+    difference between the sensors.
 
-⚠️ These are three different estimands. Comparing an `allscenes` or `samewin`
-number against the registered 0.40, or a `matched` number against 0.37, mixes
-them. The scene set is in the output filename and in a `scene_set` column for
-exactly this reason.
+    This is **THE** project-wide definition of "date-matched", identical to
+    ``fit_ship_s2matched.py`` on the trend side, adopted 2026-07-31 so one term
+    means one thing across the whole project.
+
+    ⚠️ It deliberately **differs from the registered script**, which keeps one
+    row per S2 date with weights summed per scene (a twice-matched scene counts
+    twice) and applies **no distance cap** -- worst observed pairing **51.2 days
+    apart**, 78 pairings / 53 unique scenes. That variant is REJECTED here; its
+    registered gain IoU **0.40** is therefore **not** a like-for-like target for
+    this mode. Measured cost of the switch (s32, three lineages): |Δr| ≤ 0.0074,
+    |Δ MAE| ≤ 0.0046, |Δ agreement| ≤ 0.0094, |Δ gain IoU| ≤ 0.0033, rankings
+    unchanged.
+
+⚠️ These are three different estimands; the scene set is in the output filename
+and in a `scene_set` column so they cannot be pooled.
+
+⚠️ **No 2025 scenes in a frequency comparison.** ``scene_index()`` spans to
+2025-04-03 and carries **7** scenes in 2025, while the gated S2 reference ends
+**2024-10-29** with none -- so those 7 have no possible S2 counterpart.
+``samewin`` and ``matched`` exclude them structurally; **``allscenes`` does
+not** and is contaminated for this purpose.
 
 Usage:
     python run_ship_freqmaps.py --variant last --stride 32
@@ -80,6 +96,9 @@ MIN_OBS, MIN_OBS_EPOCH = 10, 5
 EPOCH_EARLY, EPOCH_LATE = (2017, 2019), (2022, 2024)
 DFREQ = 0.5
 TOL_M = 30.0
+# S1<->S2 pairing tolerance for --scene-set matched. Must stay equal to
+# fit_ship_s2matched.py's TOL: one project-wide definition of "date-matched".
+MATCH_TOL = np.timedelta64(6, "D")
 
 
 def _mpd(lat_rad):
@@ -143,24 +162,24 @@ def s2_freq(scenes, shape, win):
 
 
 def s1_scene_plan(scene_set: str, s2s):
-    """Which S1 scenes contribute, with what multiplicity, per epoch part.
+    """Which S1 scenes contribute, per epoch part. Returns ``{part: {scene_id: w}}``.
 
-    Replicates the two scene sets of the registered
-    ``11_s2_frequency_maps.py``. Returns ``{part: {scene_id: weight}}``.
+    ``allscenes`` -- all 213 orbit-76 scenes, no window restriction. Pre-existing
+        behaviour, kept as the default so earlier outputs stay reproducible.
+        ⚠️ Includes 7 scenes in 2025 that the S2 reference cannot match.
 
-    ``samewin`` -- every orbit-76 S1 scene inside the S2 date span, weight 1,
-        epochs taken from the S1 date. This is a *same-window* reference: it
-        answers "what does S1 see over the same period", and it is what the
-        registry calls the **unmatched-calendars** comparison.
+    ``samewin`` -- the 186 orbit-76 scenes inside the gated S2 date span, epochs
+        from the S1 date. The registry's *unmatched-calendars* comparison.
 
-    ``matched`` -- the nearest S1 scene to EACH S2 date (one row per S2 date,
-        so a scene matched by two S2 dates carries weight 2), with epochs taken
-        from the **S2** date, not the S1 date. This is the registry's
-        **calendar-matched** comparison and its PRIMARY gain-IoU row, because it
-        removes the acquisition-calendar difference between the sensors.
+    ``matched`` -- nearest S1 scene per gated S2 date, within ``MATCH_TOL``
+        (±6 d), **deduplicated**; epochs from the S1 date. 48 unique scenes.
+        THE project-wide date-matching rule, shared with
+        ``fit_ship_s2matched.py``. Not the registered weighted variant -- see the
+        module docstring.
 
-    ⚠️ The two are different estimands and their numbers are NOT interchangeable
-    -- in the registry, gain IoU is 0.40 matched vs 0.37 unmatched.
+    All weights are 1 under the adopted rule; the mapping is kept as
+    ``{scene_id: weight}`` because the accumulator in :func:`s1_freq` multiplies
+    by it, and because a future scene set may legitimately need weights.
     """
     idx = shim.scene_index(shim.SEEDS[0])[["scene_id", "datetime"]]
     if scene_set == "allscenes":
@@ -178,19 +197,33 @@ def s1_scene_plan(scene_set: str, s2s):
                "late": yr.between(*EPOCH_LATE).values}
         frame = sw
     elif scene_set == "matched":
+        # THE project-wide S1<->S2 date-matching rule (adopted 2026-07-31):
+        # nearest S1 scene to each gated S2 date, kept only if within MATCH_TOL,
+        # DEDUPLICATED. Identical to fit_ship_s2matched.py so the frequency maps
+        # and the trend share one definition of "date-matched".
         s1t = idx.datetime.values
-        j = np.array([np.abs(s1t - np.datetime64(d)).argmin()
-                      for d in s2s.datetime])
-        dt_days = (np.abs(s1t[j] - s2s.datetime.values.astype("datetime64[ns]"))
-                   / np.timedelta64(1, "D"))
-        frame = idx.iloc[j].reset_index(drop=True)
-        s2yr = s2s.datetime.dt.year.values
+        pairs = [(int(np.abs(s1t - np.datetime64(d)).argmin()),
+                  np.abs(s1t - np.datetime64(d)).min())
+                 for d in s2s.datetime]
+        within = [(i, dt) for i, dt in pairs if dt <= MATCH_TOL]
+        keep = sorted({i for i, _ in within})
+        if not keep:
+            raise RuntimeError("no S1 scene within %s of any gated S2 date"
+                               % MATCH_TOL)
+        frame = idx.iloc[keep].reset_index(drop=True)
+        # Epochs from the S1 date -- with dedup there is no longer a 1:1 S2 row
+        # to inherit from, and the S1 date is what the frequency field is built
+        # on. (The rejected weighted variant took them from the S2 date.)
+        yr = frame.datetime.dt.year
         sel = {"full": np.ones(len(frame), bool),
-               "early": pd.Series(s2yr).between(*EPOCH_EARLY).values,
-               "late": pd.Series(s2yr).between(*EPOCH_LATE).values}
-        print("S1 matched: %d unique scenes for %d S2 dates; |dt| median %.1f d, "
-              "max %.1f d" % (frame.scene_id.nunique(), len(frame),
-                              float(np.median(dt_days)), float(dt_days.max())))
+               "early": yr.between(*EPOCH_EARLY).values,
+               "late": yr.between(*EPOCH_LATE).values}
+        dt_d = np.array([dt / np.timedelta64(1, "D") for _, dt in within])
+        print("S1 matched: %d unique scenes kept from %d gated S2 dates "
+              "(%d within +/-%s); |dt| median %.1f d, max %.1f d"
+              % (len(frame), len(s2s), len(within),
+                 MATCH_TOL.astype("timedelta64[D]"),
+                 float(np.median(dt_d)), float(dt_d.max())))
     else:
         raise ValueError("scene_set must be allscenes|samewin|matched, got %r"
                          % scene_set)
@@ -199,7 +232,11 @@ def s1_scene_plan(scene_set: str, s2s):
     for part, m in sel.items():
         sub = frame.loc[m]
         if len(sub):
-            # multiplicity: a scene matched by two S2 dates contributes twice
+            # Weight per scene. `matched` is deduplicated so every weight is 1;
+            # the groupby is retained because `allscenes`/`samewin` build their
+            # frame straight from the index and it costs nothing. The REJECTED
+            # weighted variant is what made this >1 (a scene matched by two S2
+            # dates counted twice) -- see the module docstring.
             plan[part] = sub.groupby("scene_id").size().to_dict()
             counts[part] = int(m.sum())
     return plan, counts

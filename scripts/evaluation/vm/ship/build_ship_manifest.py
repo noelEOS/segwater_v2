@@ -57,6 +57,7 @@ DEFAULT_TAG = "ship"
 ARM_PREFIX = {
     "tu-swin_base_patch4_window7_224": "swinb",
     "tu-convnextv2_base": "cnxb",
+    "tu-convnextv2_tiny": "cnxt",
 }
 
 # gate -> (sweep-name template AFTER tag substitution, completion-table gate key,

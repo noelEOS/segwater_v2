@@ -1,0 +1,41 @@
+# Hampyeong — ConvNeXtV2-Tiny mx630_stage2 SHIP decision, 6 arms (3 seeds x best/last).
+# All bf16 + TF32 + device-stitch. ConvNeXtV2-Tiny throughout.
+# `slug` names the ARCHITECTURE; lineage_slug/training_data carry the dataset
+# lineage, so `model` reads cnxt_s<NN>_mx630s2cnxt_<variant> and is legible alone.
+#
+# ⚠️ lineage_slug is mx630s2cnxt, distinct from BOTH mx630s2 (Swin-B) and
+#    mx630s2cnx (ConvNeXtV2-Base). All three lineages' `last` checkpoints share
+#    the filename step23930_last.pth with different weights, so a shared
+#    lineage_slug would make a pooled table ambiguous on the axis that matters.
+#
+# ⚠️ A FOURTH meaning of that filename exists on the VM: the SHA-HPO trial tree
+#    outputs/mx630_sha_hpo/upernet_tu-convnextv2_tiny/01-46-52_s42/
+#    hpo_checkpoints/trial_00006/ (tag mx630k, s42 only, sha256 e0fb9cf5…,
+#    148 MB). This spec points at mx630_stage2 (sha256 22783480…, 445 MB).
+#    The scorer's checkpoint-provenance audit is what enforces the distinction.
+repo: /home/noel/segwater_v2
+nas_root: /home/noel/ancillary/hampyeong/nas_root
+pair_root: outputs/inference
+expected_valid_pixels: 1179967
+variant_column: true
+output: /home/noel/workspace/results/ship_decision_cnxt_2026-07/hampyeong/hampyeong_cnxt_per_date_metrics.csv
+
+entries:
+  - {label: ConvNeXtV2-T, slug: cnxt, seed: 19, variant: best, lineage_slug: mx630s2cnxt, training_data: mx630,
+     run_dir: "glob:runs/hampyeong_cnxt_s19_best_*_cnxt_s19_best_native224_weighted_224_b0_s32",
+     checkpoint: outputs/mx630_stage2/upernet_tu-convnextv2_tiny/s19/upernet_tu-convnextv2_tiny_s19_step6000_pmwiou0.886298.pth}
+  - {label: ConvNeXtV2-T, slug: cnxt, seed: 19, variant: last, lineage_slug: mx630s2cnxt, training_data: mx630,
+     run_dir: "glob:runs/hampyeong_cnxt_s19_last_*_cnxt_s19_last_native224_weighted_224_b0_s32",
+     checkpoint: outputs/mx630_stage2/upernet_tu-convnextv2_tiny/s19/upernet_tu-convnextv2_tiny_s19_step23930_last.pth}
+  - {label: ConvNeXtV2-T, slug: cnxt, seed: 42, variant: best, lineage_slug: mx630s2cnxt, training_data: mx630,
+     run_dir: "glob:runs/hampyeong_cnxt_s42_best_*_cnxt_s42_best_native224_weighted_224_b0_s32",
+     checkpoint: outputs/mx630_stage2/upernet_tu-convnextv2_tiny/s42/upernet_tu-convnextv2_tiny_s42_step4800_pmwiou0.887148.pth}
+  - {label: ConvNeXtV2-T, slug: cnxt, seed: 42, variant: last, lineage_slug: mx630s2cnxt, training_data: mx630,
+     run_dir: "glob:runs/hampyeong_cnxt_s42_last_*_cnxt_s42_last_native224_weighted_224_b0_s32",
+     checkpoint: outputs/mx630_stage2/upernet_tu-convnextv2_tiny/s42/upernet_tu-convnextv2_tiny_s42_step23930_last.pth}
+  - {label: ConvNeXtV2-T, slug: cnxt, seed: 58, variant: best, lineage_slug: mx630s2cnxt, training_data: mx630,
+     run_dir: "glob:runs/hampyeong_cnxt_s58_best_*_cnxt_s58_best_native224_weighted_224_b0_s32",
+     checkpoint: outputs/mx630_stage2/upernet_tu-convnextv2_tiny/s58/upernet_tu-convnextv2_tiny_s58_step12000_pmwiou0.889181.pth}
+  - {label: ConvNeXtV2-T, slug: cnxt, seed: 58, variant: last, lineage_slug: mx630s2cnxt, training_data: mx630,
+     run_dir: "glob:runs/hampyeong_cnxt_s58_last_*_cnxt_s58_last_native224_weighted_224_b0_s32",
+     checkpoint: outputs/mx630_stage2/upernet_tu-convnextv2_tiny/s58/upernet_tu-convnextv2_tiny_s58_step23930_last.pth}

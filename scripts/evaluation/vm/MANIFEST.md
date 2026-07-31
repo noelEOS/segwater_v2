@@ -283,8 +283,14 @@ empty transect set; Torreypines → `No matched points` at every threshold, afte
 shorelines extract fine). DUCK needs `--keep-top-k 999` (else whole-run fail).
 NARRABEEN needs nothing.
 
-General rule behind the min-chainage flag: it drops transects with fewer than
-**30 timesteps**, so **any site with under ~30 staged scenes trips it** —
-Torreypines has 25. Check the scene count before assuming a site is flag-free.
+General rule behind the min-chainage flag: it drops any transect with fewer than
+**30 timesteps**. ⚠️ **The threshold is PER-TRANSECT, not per-site** — a scene
+contributes a timestep to a transect only if its shoreline actually *crosses*
+that transect, so per-transect coverage runs well below the site's scorable
+scene count. **Scene count does not predict the flag**: Trucvert has 78 staged /
+73 scorable and still trips it on *every* transect (measured 2026-08-01, thr 0.5
+s32: 176 transects, timesteps min 18 / median 23 / max 26, **zero** reach 30).
+An earlier revision of this line claimed "any site with under ~30 staged scenes
+trips it" — that fits Torreypines (25 staged) but is wrong in general.
 Full detail, including the
 verified Narrabeen sanity numbers, is in the runbook.

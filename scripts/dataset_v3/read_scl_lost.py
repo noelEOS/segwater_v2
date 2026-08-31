@@ -10,7 +10,8 @@ dependency on geopandas or fiona, neither of which is installed on the VM.
 Two things about this data that shape how it may be used:
 
 * ``chip_id`` is the literal string ``'<NA>'`` on all 217,894 features. These
-  windows were never cut, so they have no chip identity and no memmap row. The
+  windows were never cut into the memmaps, so they have no chip identity and no
+  memmap row -- though their source pixels exist in the pair rasters. The
   column is read and deliberately dropped -- carrying it would invite a join
   against the chip corpus that can only produce nonsense.
 * ``verdict`` separates the two clauses of the original gate: ``cloud15`` for

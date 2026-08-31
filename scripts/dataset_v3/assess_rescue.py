@@ -17,12 +17,18 @@ afterwards, because a filter can be forgotten and a structure cannot:
   pixel of genuinely absent data, not for cloud, and a new cloud mask cannot
   redeem missing data. They are dropped at read time.
 
-⚠️ **These windows were never cut.** No pixels exist for them anywhere, they
-have no ``chip_id`` and no memmap row. The manifest this writes is a work order
-for re-chipping from full-pair sources -- it is not a set of rows that can be
-appended to the chip corpus, and nothing may join it to the base table. The
-output deliberately has no ``chip_id`` column at all, so a join attempted on one
-fails loudly instead of silently matching nothing.
+⚠️ **These windows have no chip array in the memmap.** The source pixels exist
+-- the label and S2 band rasters cover the whole pair, which is how the invalid
+fraction below is measured at all -- but chipping only cut and stacked the
+windows that passed the gate, so a rejected window was never written to a
+memmap and has no row index into one. It also has no ``chip_id``.
+
+The manifest this writes is therefore a work order: cut these footprints from
+pair rasters we already hold, append them to the memmaps, then assign chip ids
+and splits. Until that happens they are not rows that can be appended to the
+chip corpus, and nothing may join this file to the base table. The output
+deliberately has no ``chip_id`` column at all, so a join attempted on one fails
+loudly instead of silently matching nothing.
 
 Scores are stored as a continuous fraction. No threshold is applied here: a
 threshold is a decision, and decisions belong in apply_invalid.py.

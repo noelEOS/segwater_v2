@@ -1,0 +1,44 @@
+# hamp24 STRIDE-SENSITIVITY scoring spec — full_bay extent, stride 112.
+# Generated from hamp24_full_bay.yaml (the spec behind the reported s32
+# numbers) by gen_stride_specs.py. The scored domain is IDENTICAL --
+# same 24 dates, same GT dir, same full_bay mask, same
+# expected_valid_pixels -- so IoU differences are attributable to the
+# inference stride alone. expected_stride makes the provenance audit
+# require stride 112 of every run it scores.
+# 21 arms (7 archs x 3 seeds), 24 dates from pairing_metadata.csv, run dirs
+# from the dev_sweep_hamp24_* sweeps (main + fillin share the sweep name, so
+# each glob matches exactly one dir). Scored by score_hamp24.py.
+repo: /home/noel/segwater_v2
+pair_root: outputs/inference
+dates_csv: /home/noel/hampyeong_ron_134_ts_16_sn_15_all24/pairing_metadata.csv
+gt_dir: /home/noel/ancillary/hampyeong/gt_flood_masks_24_floorminute/full_bay
+valid_mask: /home/noel/ancillary/hampyeong/valid_masks_extents/DEM_VALID_MASK_aoi_extended_full_bay.tif
+expected_valid_pixels: 1273639
+variant_column: false
+lineage_slug: pairbased
+training_data: pair-based
+expected_stride: 112
+output: /home/noel/hamp24_str112_per_date_metrics_full_bay.csv
+
+entries:
+  - {label: "Swin-B", slug: swin_b, seed: 19, run_dir: "glob:dev_sweep_hamp24_str112_s19_*_upernet_swin_base_224_native224_weighted_224_b0_s112", checkpoint: outputs/stage2/upernet_tu-swin_base_patch4_window7_224/s19/best.pth}
+  - {label: "Swin-B", slug: swin_b, seed: 42, run_dir: "glob:dev_sweep_hamp24_str112_s42_*_upernet_swin_base_224_native224_weighted_224_b0_s112", checkpoint: outputs/stage2/upernet_tu-swin_base_patch4_window7_224/s42/best.pth}
+  - {label: "Swin-B", slug: swin_b, seed: 58, run_dir: "glob:dev_sweep_hamp24_str112_s58_*_upernet_swin_base_224_native224_weighted_224_b0_s112", checkpoint: outputs/stage2/upernet_tu-swin_base_patch4_window7_224/s58/best.pth}
+  - {label: "ConvNeXtV2", slug: convnextv2, seed: 19, run_dir: "glob:dev_sweep_hamp24_str112_s19_*_upernet_tu-convnextv2_base_native224_weighted_224_b0_s112", checkpoint: outputs/stage2/upernet_tu-convnextv2_base/s19/best.pth}
+  - {label: "ConvNeXtV2", slug: convnextv2, seed: 42, run_dir: "glob:dev_sweep_hamp24_str112_s42_*_upernet_tu-convnextv2_base_native224_weighted_224_b0_s112", checkpoint: outputs/stage2/upernet_tu-convnextv2_base/s42/best.pth}
+  - {label: "ConvNeXtV2", slug: convnextv2, seed: 58, run_dir: "glob:dev_sweep_hamp24_str112_s58_*_upernet_tu-convnextv2_base_native224_weighted_224_b0_s112", checkpoint: outputs/stage2/upernet_tu-convnextv2_base/s58/best.pth}
+  - {label: "DeepLabV3+", slug: deeplabv3plus, seed: 19, run_dir: "glob:dev_sweep_hamp24_str112_s19_*_deeplabv3plus_resnet50_native224_weighted_224_b0_s112", checkpoint: outputs/stage2/deeplabv3plus_resnet50/s19/best.pth}
+  - {label: "DeepLabV3+", slug: deeplabv3plus, seed: 42, run_dir: "glob:dev_sweep_hamp24_str112_s42_*_deeplabv3plus_resnet50_native224_weighted_224_b0_s112", checkpoint: outputs/stage2/deeplabv3plus_resnet50/s42/best.pth}
+  - {label: "DeepLabV3+", slug: deeplabv3plus, seed: 58, run_dir: "glob:dev_sweep_hamp24_str112_s58_*_deeplabv3plus_resnet50_native224_weighted_224_b0_s112", checkpoint: outputs/stage2/deeplabv3plus_resnet50/s58/best.pth}
+  - {label: "DPT-ViT-B", slug: dpt_vit_b, seed: 19, run_dir: "glob:dev_sweep_hamp24_str112_s19_*_dpt_vit_b_16_native224_weighted_224_b0_s112", checkpoint: outputs/stage2/dpt_tu-vit_base_patch16_224.mae/s19/best.pth}
+  - {label: "DPT-ViT-B", slug: dpt_vit_b, seed: 42, run_dir: "glob:dev_sweep_hamp24_str112_s42_*_dpt_vit_b_16_native224_weighted_224_b0_s112", checkpoint: outputs/stage2/dpt_tu-vit_base_patch16_224.mae/s42/best.pth}
+  - {label: "DPT-ViT-B", slug: dpt_vit_b, seed: 58, run_dir: "glob:dev_sweep_hamp24_str112_s58_*_dpt_vit_b_16_native224_weighted_224_b0_s112", checkpoint: outputs/stage2/dpt_tu-vit_base_patch16_224.mae/s58/best.pth}
+  - {label: "SegFormer-B4", slug: segformer_b4, seed: 19, run_dir: "glob:dev_sweep_hamp24_str112_s19_*_segformer_mit_b4_native224_weighted_224_b0_s112", checkpoint: outputs/stage2/segformer_mit_b4/s19/best.pth}
+  - {label: "SegFormer-B4", slug: segformer_b4, seed: 42, run_dir: "glob:dev_sweep_hamp24_str112_s42_*_segformer_mit_b4_native224_weighted_224_b0_s112", checkpoint: outputs/stage2/segformer_mit_b4/s42/best.pth}
+  - {label: "SegFormer-B4", slug: segformer_b4, seed: 58, run_dir: "glob:dev_sweep_hamp24_str112_s58_*_segformer_mit_b4_native224_weighted_224_b0_s112", checkpoint: outputs/stage2/segformer_mit_b4/s58/best.pth}
+  - {label: "UNet-R50", slug: unet_r50, seed: 19, run_dir: "glob:dev_sweep_hamp24_str112_s19_*_unet_resnet50_native224_weighted_224_b0_s112", checkpoint: outputs/stage2/unet_resnet50/s19/best.pth}
+  - {label: "UNet-R50", slug: unet_r50, seed: 42, run_dir: "glob:dev_sweep_hamp24_str112_s42_*_unet_resnet50_native224_weighted_224_b0_s112", checkpoint: outputs/stage2/unet_resnet50/s42/best.pth}
+  - {label: "UNet-R50", slug: unet_r50, seed: 58, run_dir: "glob:dev_sweep_hamp24_str112_s58_*_unet_resnet50_native224_weighted_224_b0_s112", checkpoint: outputs/stage2/unet_resnet50/s58/best.pth}
+  - {label: "UNet++-R50", slug: unetplusplus_r50, seed: 19, run_dir: "glob:dev_sweep_hamp24_str112_s19_*_unetplusplus_resnet50_native224_weighted_224_b0_s112", checkpoint: outputs/stage2/unetplusplus_resnet50/s19/best.pth}
+  - {label: "UNet++-R50", slug: unetplusplus_r50, seed: 42, run_dir: "glob:dev_sweep_hamp24_str112_s42_*_unetplusplus_resnet50_native224_weighted_224_b0_s112", checkpoint: outputs/stage2/unetplusplus_resnet50/s42/best.pth}
+  - {label: "UNet++-R50", slug: unetplusplus_r50, seed: 58, run_dir: "glob:dev_sweep_hamp24_str112_s58_*_unetplusplus_resnet50_native224_weighted_224_b0_s112", checkpoint: outputs/stage2/unetplusplus_resnet50/s58/best.pth}

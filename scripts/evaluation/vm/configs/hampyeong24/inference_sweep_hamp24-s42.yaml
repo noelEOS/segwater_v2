@@ -1,0 +1,71 @@
+# hamp24 campaign: Hampyeong ALL-24-scene inference, seed s42, stride 32.
+# Settings mirror the reported dev_sweep_all_hampyeong runs exactly (same
+# common_overrides + native224_weighted_224_b0_s32 preset); only input_dir
+# (24 scenes) and the sweep name differ. Generated 2026-08-12.
+# Includes the 6 checkpoints staged on the VM for s42.
+
+sweep:
+  name: "dev_sweep_hamp24_s42"
+  dry_run: false
+  continue_on_error: true
+  max_parallel: 3
+
+  input_dir: "/home/noel/hampyeong_ron_134_ts_16_sn_15_all24"
+  input_glob: "S1B_*.tif"
+
+  common_overrides:
+    inference.output.root_dir: "outputs/inference"
+    inference.post_processing.smoothing.apply_simplification: true
+    inference.post_processing.smoothing.simplify_tolerance_meters: 1.0
+    inference.post_processing.filtering.apply_length_filter: false
+    inference.post_processing.filtering.min_length_meters: 10000.0
+    inference.post_processing.filtering.keep_top_k: 5
+    inference.data.edge_policy: "shift_inward"
+    inference.stitching.min_weight: 0.001
+
+  checkpoints:
+    - name: "upernet_tu-convnextv2_base"
+      checkpoint_path: "outputs/stage2/upernet_tu-convnextv2_base/s42/best.pth"
+      model:
+        arch: "upernet"
+        encoder_name: "tu-convnextv2_base"
+
+    - name: "deeplabv3plus_resnet50"
+      checkpoint_path: "outputs/stage2/deeplabv3plus_resnet50/s42/best.pth"
+      model:
+        arch: "deeplabv3plus"
+        encoder_name: "resnet50"
+
+    - name: "dpt_vit_b_16"
+      checkpoint_path: "outputs/stage2/dpt_tu-vit_base_patch16_224.mae/s42/best.pth"
+      model:
+        arch: "dpt"
+        encoder_name: "tu-vit_base_patch16_224.mae"
+
+    - name: "segformer_mit_b4"
+      checkpoint_path: "outputs/stage2/segformer_mit_b4/s42/best.pth"
+      model:
+        arch: "segformer"
+        encoder_name: "mit_b4"
+
+    - name: "unet_resnet50"
+      checkpoint_path: "outputs/stage2/unet_resnet50/s42/best.pth"
+      model:
+        arch: "unet"
+        encoder_name: "resnet50"
+
+    - name: "unetplusplus_resnet50"
+      checkpoint_path: "outputs/stage2/unetplusplus_resnet50/s42/best.pth"
+      model:
+        arch: "unetplusplus"
+        encoder_name: "resnet50"
+
+
+  presets:
+    - name: "native224_weighted_224_b0_s32"
+      overrides:
+        inference.data.tile_size: 224
+        inference.data.buffer_size: 0
+        inference.data.stride: 32
+        inference.stitching.mode: "weighted_blend"
+        inference.stitching.blend_window: "hann"

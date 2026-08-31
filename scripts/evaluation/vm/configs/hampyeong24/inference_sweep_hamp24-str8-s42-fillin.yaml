@@ -1,0 +1,44 @@
+# hamp24 campaign: Hampyeong ALL-24-scene inference, seed s42, stride 8.
+# STRIDE SENSITIVITY: generated from inference_sweep_hamp24-s42-fillin.yaml by
+# gen_stride_configs.py; ONLY the stride (32 -> 8), the preset
+# name and the sweep name differ from the reported campaign.
+# Settings mirror the reported dev_sweep_all_hampyeong runs exactly (same
+# common_overrides + native224_weighted_224_b0_s32 preset); only input_dir
+# (24 scenes) and the sweep name differ. Generated 2026-08-12.
+# FILL-IN for checkpoints missing on 2026-08-12: run AFTER staging them. Same sweep name as the main config so run-dir globs stay uniform.
+
+sweep:
+  name: "dev_sweep_hamp24_str8_s42"
+  dry_run: false
+  continue_on_error: true
+  max_parallel: 3
+
+  input_dir: "/home/noel/hampyeong_ron_134_ts_16_sn_15_all24"
+  input_glob: "S1B_*.tif"
+
+  common_overrides:
+    inference.output.root_dir: "outputs/inference"
+    inference.post_processing.smoothing.apply_simplification: true
+    inference.post_processing.smoothing.simplify_tolerance_meters: 1.0
+    inference.post_processing.filtering.apply_length_filter: false
+    inference.post_processing.filtering.min_length_meters: 10000.0
+    inference.post_processing.filtering.keep_top_k: 5
+    inference.data.edge_policy: "shift_inward"
+    inference.stitching.min_weight: 0.001
+
+  checkpoints:
+    - name: "upernet_swin_base_224"
+      checkpoint_path: "outputs/stage2/upernet_tu-swin_base_patch4_window7_224/s42/best.pth"
+      model:
+        arch: "upernet"
+        encoder_name: "tu-swin_base_patch4_window7_224"
+
+
+  presets:
+    - name: "native224_weighted_224_b0_s8"
+      overrides:
+        inference.data.tile_size: 224
+        inference.data.buffer_size: 0
+        inference.data.stride: 8
+        inference.stitching.mode: "weighted_blend"
+        inference.stitching.blend_window: "hann"

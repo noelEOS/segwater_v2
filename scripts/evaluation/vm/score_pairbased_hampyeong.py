@@ -18,8 +18,9 @@ scorer, not decoration; do not relax them):
   * identical ground-truth across every entry on a given date.
   * prediction-digest DISTINCTNESS across entries (catches seed/ckpt miswiring).
   * provenance audit: run_config.yaml == run_summary.json == run_manifest.csv
-    checkpoint; stride 32; threshold 0.5; each entry's checkpoint is the one the
-    spec expects; no two entries share a checkpoint.
+    checkpoint; stride == spec's `expected_stride` (default 32, i.e. every
+    pre-existing spec keeps the identical guard); threshold 0.5; each entry's
+    checkpoint is the one the spec expects; no two entries share a checkpoint.
 
 Spec schema (YAML) — see specs/ for the three canonical instances:
     repo:        abs path to the segwater_v2 checkout (default /home/noel/segwater_v2)
@@ -31,6 +32,12 @@ Spec schema (YAML) — see specs/ for the three canonical instances:
                                  # (default "pairbased" -- MUST be set for any
                                  #  other lineage, e.g. "mx630s2", "mx630k")
     training_data: str           # `training_data` column (default "pair-based")
+    expected_stride: int         # inference stride the audit REQUIRES of every
+                                 # run (default 32 = the operational stride).
+                                 # Set it only for a deliberate stride-
+                                 # sensitivity spec; it is a guard, not a
+                                 # selector, so it must state the stride the
+                                 # runs were actually produced at.
     output: abs path for the CSV (refuses to clobber)
     entries:                     # one row-source per arch/seed/variant
       - label:      human arch label, e.g. Swin-B
@@ -153,7 +160,9 @@ def audit(spec: dict, repo: Path, pair_root: Path) -> list[dict]:
         require(set(man["checkpoint_path"].unique()) == {ckpt}, f"{tag}: manifest disagrees")
         require(ckpt not in seen, f"checkpoint collision: {tag} / {seen.get(ckpt)}")
         seen[ckpt] = tag
-        require(cfg["inference"]["data"]["stride"] == 32, f"{tag}: stride != 32")
+        want_stride = int(spec.get("expected_stride", 32))
+        require(cfg["inference"]["data"]["stride"] == want_stride,
+                f"{tag}: stride != {want_stride}")
         require(cfg["inference"]["post_processing"]["threshold"] == 0.5, f"{tag}: threshold != 0.5")
         resolved.append({**e, "resolved_run_dir": run_dir})
     print(f"Provenance audit passed: {len(seen)} distinct checkpoints")

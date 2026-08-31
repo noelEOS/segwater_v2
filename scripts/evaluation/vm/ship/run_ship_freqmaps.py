@@ -18,16 +18,19 @@ replacement, and every output row carries `lineage`, `variant`, `stride` and
 
 THREE SCENE SETS — pick the one matching the registered row you compare against
 ------------------------------------------------------------------------------
-``--scene-set allscenes`` (DEFAULT)
-    All 213 orbit-76 S1 scenes, no window restriction, epochs from the S1 date.
-    This is what the script did before the scene-set flag existed; it is the
-    default so every previously-written `freq_stats_<variant>_s<stride>.csv`
-    stays reproducible. It corresponds to **no** registered row exactly.
-
-``--scene-set samewin``
-    The **186** orbit-76 scenes inside the S2 date span (2017-08-22 →
-    2024-10-29), weight 1, epochs from the S1 date. This is the registry's
+``--scene-set samewin`` (DEFAULT)
+    The **186** orbit-76 scenes inside the gated S2 date span (2017-08-22 →
+    2024-10-29), weight 1, epochs from the S1 date. The registry's
     **unmatched-calendars** comparison (registered gain IoU **0.37**).
+    Default since 2026-07-31 because it is the widest scene set that is
+    **free of 2025 contamination** (see the 2025 warning below).
+
+``--scene-set allscenes``
+    All 213 orbit-76 S1 scenes, no window restriction, epochs from the S1 date.
+    What the script did before the scene-set flag existed, and the **former
+    default** -- retained only so `freq_stats_<variant>_s<stride>.csv` files
+    written before 2026-07-31 stay reproducible. ⚠️ **Contaminated for frequency
+    work** (7 scenes in 2025); do not use it for new analysis.
 
 ``--scene-set matched``
     The nearest S1 scene to each gated S2 date, kept only if within
@@ -275,7 +278,7 @@ def main():
                     help="lineage slug for the `lineage` column; defaults to the "
                          "slug registered for --tag. MUST differ between lineages "
                          "whose checkpoint filenames collide.")
-    ap.add_argument("--scene-set", default="allscenes",
+    ap.add_argument("--scene-set", default="samewin",
                     choices=("allscenes", "samewin", "matched"),
                     help="S1 scene set. `allscenes` = all 213 orbit-76 scenes, "
                          "no window restriction -- what this script did before "
@@ -301,6 +304,10 @@ def main():
     # The scene set is part of the filename: a `matched` run must NOT overwrite
     # the `samewin` table -- they are different estimands, not two takes on one.
     # `samewin` keeps the historical name so existing consumers are unaffected.
+    # Every scene set is named in the filename EXCEPT allscenes, which keeps the
+    # bare historical name so the CSVs written before the flag existed are not
+    # orphaned. `samewin` is the default but still carries its suffix -- the
+    # default changed once (2026-07-31) and a bare name would now be ambiguous.
     tag = "%s_s%d%s" % (a.variant, a.stride,
                         "" if a.scene_set == "allscenes" else "_" + a.scene_set)
     OUT_DIR.mkdir(parents=True, exist_ok=True)

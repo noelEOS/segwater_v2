@@ -61,3 +61,11 @@ wandb/
 
 # Jupyter Notebook
 .ipynb_checkpoints
+
+# Local analysis trees: code mixed with many GB of rasters/outputs.
+# Untracked in practice; listed so `git status` stays readable.
+ancillary_local/
+dataset_reconstruction/
+label_diagnostic/
+explanation/
+_idx/

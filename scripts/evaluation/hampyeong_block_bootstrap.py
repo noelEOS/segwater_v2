@@ -109,13 +109,13 @@ def paired_block_bootstrap(cA: np.ndarray, cB: np.ndarray, rng: np.random.Genera
             "excludes_zero": bool(lo > 0 or hi < 0), "n_blocks": n_blocks}
 
 
-def run(nas_root: Path, runs_root: Path) -> pd.DataFrame:
+def run(nas_root: Path, runs_root: Path, block_px: int = BLOCK_PX) -> pd.DataFrame:
     mask_path = valid_mask_path(nas_root)
-    block_index_raw = block_ids_for_valid_pixels(mask_path, BLOCK_PX)
+    block_index_raw = block_ids_for_valid_pixels(mask_path, block_px)
     # densify block ids to 0..n_blocks-1 for bincount
     uniq, block_index = np.unique(block_index_raw, return_inverse=True)
     n_blocks = uniq.size
-    print(f"AOI splits into {n_blocks} blocks of {BLOCK_PX*METRES_PER_PIXEL/1000:.0f} km "
+    print(f"AOI splits into {n_blocks} blocks of {block_px*METRES_PER_PIXEL/1000:.0f} km "
           f"({EXPECTED_VALID_PIXELS} valid px)\n")
 
     run_dir = {(arch, seed): rd for _, arch, seed, rd in NEW_RUNS}
@@ -135,7 +135,7 @@ def run(nas_root: Path, runs_root: Path) -> pd.DataFrame:
             rng = np.random.default_rng(BOOT_SEED)
             res = paired_block_bootstrap(cA, cB, rng, N_BOOT)
             rows.append({"date": date, "seed": seed, "contrast": f"{ARCH_A}-{ARCH_B}",
-                         "block_km": BLOCK_PX * METRES_PER_PIXEL / 1000, **res})
+                         "block_km": block_px * METRES_PER_PIXEL / 1000, **res})
             print(f"  {date} s{seed}: point diff {res['point_diff']:+.4f}  "
                   f"95% block-CI [{res['ci_lo']:+.4f}, {res['ci_hi']:+.4f}]  "
                   f"{'excludes 0' if res['excludes_zero'] else 'includes 0'}")
@@ -145,7 +145,7 @@ def run(nas_root: Path, runs_root: Path) -> pd.DataFrame:
                 rng0 = np.random.default_rng(BOOT_SEED)
                 null = paired_block_bootstrap(cA, cA, rng0, N_BOOT)
                 rows.append({"date": date, "seed": seed, "contrast": f"NULL_{ARCH_A}_vs_self",
-                             "block_km": BLOCK_PX * METRES_PER_PIXEL / 1000, **null})
+                             "block_km": block_px * METRES_PER_PIXEL / 1000, **null})
                 assert null["ci_lo"] <= 0 <= null["ci_hi"] and null["point_diff"] == 0.0, \
                     "null control (raster vs itself) must give a zero point diff and a CI straddling 0"
                 null_done = True
@@ -158,13 +158,45 @@ def main() -> None:
     parser.add_argument("--nas-root", type=Path, default=Path(DEFAULT_NAS_ROOT))
     parser.add_argument("--runs-root", type=Path, default=Path(DEFAULT_RUNS_ROOT))
     parser.add_argument("--out-dir", type=Path, default=Path(DEFAULT_OUT_DIR))
+    parser.add_argument(
+        "--block-px", type=int, nargs="+", default=None,
+        help=(
+            "Block-size sensitivity sweep, in pixels (10 m/px). Omit for the primary "
+            f"{BLOCK_PX} px ({BLOCK_PX*METRES_PER_PIXEL/1000:.0f} km) analysis, which writes "
+            "statistical_assessment_block_bootstrap.csv unchanged. Passing sizes runs each "
+            "one and writes statistical_assessment_block_bootstrap_sweep.csv instead, "
+            "leaving the primary CSV untouched. Motivation: the measured Hampyeong residual "
+            "range is ~1,838 m (scripts/evaluation/hampyeong_variogram.py), so the primary "
+            "200 px block is only ~1.09x the range -- below the >=3x rule the Demak analysis "
+            "satisfied. The sweep tests whether the contrast survives wider, fewer blocks."
+        ))
     args = parser.parse_args()
     if not args.nas_root.exists():
         raise SystemExit(f"NAS root not found: {args.nas_root}\nIs the external volume mounted?")
 
+    args.out_dir.mkdir(parents=True, exist_ok=True)
+
+    if args.block_px:
+        frames = []
+        for bpx in args.block_px:
+            print(f"=== block {bpx} px ({bpx*METRES_PER_PIXEL/1000:.1f} km) ===")
+            frames.append(run(args.nas_root, args.runs_root, bpx))
+        df = pd.concat(frames, ignore_index=True)
+        out = args.out_dir / "statistical_assessment_block_bootstrap_sweep.csv"
+        df.to_csv(out, index=False)
+
+        real = df[~df.contrast.str.startswith("NULL")]
+        print("\nBlock-size sensitivity (ConvNeXtV2 - Swin-B, per date x seed):")
+        for bkm, grp in real.groupby("block_km"):
+            n_excl = int(grp.excludes_zero.sum())
+            nb = int(grp.n_blocks.iloc[0])
+            print(f"  {bkm:>4.1f} km  ({nb:>3d} blocks):  {n_excl}/{len(grp)} CIs exclude zero"
+                  f"   median CI width {(grp.ci_hi - grp.ci_lo).median():.4f}")
+        print(f"\nWrote {out}")
+        return
+
     df = run(args.nas_root, args.runs_root)
     real = df[~df.contrast.str.startswith("NULL")]
-    args.out_dir.mkdir(parents=True, exist_ok=True)
     out = args.out_dir / "statistical_assessment_block_bootstrap.csv"
     df.to_csv(out, index=False)
 

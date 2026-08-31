@@ -1,6 +1,8 @@
 #!/usr/bin/env python3
 """
-Does inference stride 8 vs 32 matter inside the Demak transition-zone AOI?
+Does the inference stride matter inside the Demak transition-zone AOI?
+
+Strides 8, 32 and 112, contrasted against the operational stride 32.
 
 Scores Swin-B and ConvNeXtV2-B at BOTH strides, on the same AOI, same 6
 concurrent S1-S2 pairs, same 3 seeds, same masking as
@@ -57,12 +59,41 @@ from transition_zone_aoi_accuracy import (  # noqa: E402
     utc_now,
 )
 
+# FULL ROSTER, deliberately wider than transition_zone_aoi_accuracy.py.
+#
+# That script was reduced to the Swin-B vs ConvNeXtV2-B match-up on 2026-07-17
+# because its question is an ARCHITECTURE comparison at equal capacity. This
+# script's question is different -- how the stride moves the metric -- and it is
+# answered per architecture (each row is a within-model, within-seed paired
+# delta), so nothing is gained by restricting the roster and the extra rows show
+# whether the stride response is architecture-dependent. All 7 roster models have
+# 3 seeds at BOTH strides in the concurrent tree; the large variants (Swin-L,
+# ConvNeXtV2-L) have s32 only and are therefore excluded -- they cannot be paired.
+#
+# Order matches Table 5 of the manuscript draft.
 MODELS = {
     "Swin-B": "upernet_swin_base_224",
     "ConvNeXtV2-B": "upernet_tu-convnextv2_base",
+    "DPT-ViT-B/16": "dpt_vit_b_16",
+    "SegFormer-B4": "segformer_mit_b4",
+    "DeepLabV3+": "deeplabv3plus_resnet50",
+    "U-Net": "unet_resnet50",
+    "U-Net++": "unetplusplus_resnet50",
 }
 MODEL_ORDER = list(MODELS)
-STRIDES = ["s8", "s32"]
+# s112 added 2026-08-14 (inference run on gpu-rtx-hpo-west, project peak-tide-504014;
+# keep-set egressed as demak_concurrent_s112_20260814.tar.zst). The operational
+# stride is s32, so it is the REFERENCE of every paired contrast below and the
+# comparisons are s8-s32 and s112-s32.
+#
+# NOTE the bootstrap below is unaffected by adding a stride: `mult` is drawn ONCE
+# per iteration from an RNG seeded only by BOOT_SEED and applied to every key, so
+# the draw sequence depends on (nb, n_boot) alone. Adding s112 keeps the existing
+# s8-s32 numbers bit-identical (verified on re-run).
+STRIDES = ["s8", "s32", "s112"]
+
+# Every paired contrast is (stride - REFERENCE_STRIDE), within model and seed.
+REFERENCE_STRIDE = "s32"
 
 
 def resolve_run_dir(seed: str, token: str, stride: str) -> Path:
@@ -182,34 +213,61 @@ def main() -> None:
             biou[k][it] = iou_of(agg)
             bf1[k][it] = f1_of(agg)
 
-    # within-(model, seed): s8 - s32. Seed and checkpoint held fixed => stride is
-    # the only difference. This is THE test.
+    # within-(model, seed): stride - REFERENCE_STRIDE. Seed and checkpoint held
+    # fixed => stride is the only difference. This is THE test.
+    #
+    # Long form: one row per (model, seed, stride) for every non-reference stride,
+    # so adding a stride adds rows rather than columns. `d_iou` is signed so that
+    # POSITIVE means the compared stride scores higher than s32.
     out = []
+    others = [s for s in STRIDES if s != REFERENCE_STRIDE]
     for model in MODEL_ORDER:
         for seed in SEEDS:
-            k8, k32 = (model, "s8", seed), (model, "s32", seed)
-            d = biou[k8] - biou[k32]
-            df1 = bf1[k8] - bf1[k32]
-            a8, a32 = counts[k8].sum(axis=0), counts[k32].sum(axis=0)
-            lo, hi = float(np.percentile(d, 2.5)), float(np.percentile(d, 97.5))
-            out.append(
-                {
-                    "model": model,
-                    "seed": seed,
-                    "iou_s8": iou_of(a8),
-                    "iou_s32": iou_of(a32),
-                    "d_iou_s8_minus_s32": iou_of(a8) - iou_of(a32),
-                    "d_iou_ci_lower": lo,
-                    "d_iou_ci_upper": hi,
-                    "d_iou_excludes_zero": bool(lo > 0 or hi < 0),
-                    "prob_s8_better": float((d > 0).mean()),
-                    "d_f1_s8_minus_s32": f1_of(a8) - f1_of(a32),
-                    "d_f1_ci_lower": float(np.percentile(df1, 2.5)),
-                    "d_f1_ci_upper": float(np.percentile(df1, 97.5)),
-                }
-            )
+            kref = (model, REFERENCE_STRIDE, seed)
+            aref = counts[kref].sum(axis=0)
+            for stride in others:
+                k = (model, stride, seed)
+                d = biou[k] - biou[kref]
+                df1 = bf1[k] - bf1[kref]
+                a = counts[k].sum(axis=0)
+                lo, hi = float(np.percentile(d, 2.5)), float(np.percentile(d, 97.5))
+                out.append(
+                    {
+                        "model": model,
+                        "seed": seed,
+                        "stride": stride,
+                        "reference_stride": REFERENCE_STRIDE,
+                        "iou": iou_of(a),
+                        "iou_reference": iou_of(aref),
+                        "d_iou": iou_of(a) - iou_of(aref),
+                        "d_iou_ci_lower": lo,
+                        "d_iou_ci_upper": hi,
+                        "d_iou_excludes_zero": bool(lo > 0 or hi < 0),
+                        "prob_stride_better": float((d > 0).mean()),
+                        "d_f1": f1_of(a) - f1_of(aref),
+                        "d_f1_ci_lower": float(np.percentile(df1, 2.5)),
+                        "d_f1_ci_upper": float(np.percentile(df1, 97.5)),
+                    }
+                )
     ds = pd.DataFrame(out)
     ds.to_csv(args.out / "stride_contrast_paired.csv", index=False)
+
+    # Back-compatible wide view of the s8-vs-s32 contrast, with the original
+    # column names, so anything written against the 2-stride CSV keeps working.
+    legacy = (
+        ds[ds["stride"] == "s8"]
+        .rename(
+            columns={
+                "iou": "iou_s8",
+                "iou_reference": "iou_s32",
+                "d_iou": "d_iou_s8_minus_s32",
+                "prob_stride_better": "prob_s8_better",
+                "d_f1": "d_f1_s8_minus_s32",
+            }
+        )
+        .drop(columns=["stride", "reference_stride"])
+    )
+    legacy.to_csv(args.out / "stride_contrast_paired_s8_vs_s32.csv", index=False)
 
     # Does stride change the Swin-B vs ConvNeXtV2-B verdict?
     verdict = []
@@ -257,9 +315,14 @@ def main() -> None:
         across[["model", "stride", "iou_mean", "iou_std", "f1_mean", "roc_auc_mean", "average_precision_mean"]]
         .to_string(index=False, float_format=lambda v: f"{v:.4f}")
     )
-    print("\n=== STRIDE EFFECT: paired s8 - s32, seed & checkpoint held fixed ===")
     print(
-        ds[["model", "seed", "iou_s32", "iou_s8", "d_iou_s8_minus_s32", "d_iou_ci_lower", "d_iou_ci_upper", "d_iou_excludes_zero", "prob_s8_better"]]
+        f"\n=== STRIDE EFFECT: paired (stride - {REFERENCE_STRIDE}), "
+        "seed & checkpoint held fixed ==="
+    )
+    print(
+        ds[["model", "seed", "stride", "iou_reference", "iou", "d_iou",
+            "d_iou_ci_lower", "d_iou_ci_upper", "d_iou_excludes_zero",
+            "prob_stride_better"]]
         .to_string(index=False, float_format=lambda v: f"{v:.4f}")
     )
     print("\n=== Swin-B - ConvNeXtV2-B, at each stride ===")

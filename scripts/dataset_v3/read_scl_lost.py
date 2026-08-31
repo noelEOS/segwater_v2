@@ -29,6 +29,11 @@ import pandas as pd
 
 LAYER = "scl_lost"
 
+# A window is one chip: 224 px on the S2 10 m lattice, square in degrees
+# because the rasters are EPSG:4326 at a fixed pixel size.
+CHIP_SIDE_DEG = 224 * 8.98315284119522e-05
+SHAPE_TOLERANCE = 1e-6
+
 # GeoPackage binary header: magic "GP", version, flags, srs_id, then the
 # envelope. Bit 0 of flags is byte order; bits 1-3 are the envelope indicator.
 _HEADER_PREFIX = 8
@@ -55,6 +60,27 @@ def envelope_bounds(blob: bytes) -> tuple[float, float, float, float]:
     values = struct.unpack_from("%s%dd" % (order, count), blob, _HEADER_PREFIX)
     # Envelope order is minx, maxx, miny, maxy.
     return values[0], values[2], values[1], values[3]
+
+
+def malformed_fraction(frame: pd.DataFrame) -> float:
+    """Share of windows that are not a chip-sized square.
+
+    These GPKGs do not store window geometry directly: the writer recovers the
+    affine by fitting the *passed* chips' bounds against their (row, col) with
+    ``np.polyfit``. A pair whose survivors occupy a single row -- or a single
+    column -- leaves that axis' slope unconstrained, and the fit can come back
+    badly scaled on one axis while the other is exact. PAIR_4985 is the known
+    case: correct width, 14.5x too tall.
+
+    So the shape is checked rather than trusted. An x/y asymmetry is the
+    fingerprint of this failure.
+    """
+    if frame.empty:
+        return 0.0
+    dx = (frame["bbox_e"] - frame["bbox_w"]) / CHIP_SIDE_DEG
+    dy = (frame["bbox_n"] - frame["bbox_s"]) / CHIP_SIDE_DEG
+    bad = ((dx - 1).abs() > SHAPE_TOLERANCE) | ((dy - 1).abs() > SHAPE_TOLERANCE)
+    return float(bad.mean())
 
 
 def read_scl_lost(path: Path, verdicts: set[str] | None = None) -> pd.DataFrame:

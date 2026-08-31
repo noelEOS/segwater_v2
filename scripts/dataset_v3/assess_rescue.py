@@ -42,7 +42,8 @@ import rasterio
 
 import invalid_mask
 import paths
-from read_scl_lost import pair_name_from_path, read_scl_lost
+from read_scl_lost import (malformed_fraction, pair_name_from_path,
+                           read_scl_lost)
 
 # Verified on the VM 2026-08-31. Asserted so a corpus swap cannot pass silently.
 EXPECTED_GPKG_FILES = 3_097
@@ -66,13 +67,22 @@ EXPECTED_ABSENT = {"PAIR_1266", "PAIR_3254"}
 # Only the cloud clause is reassessable; see the module docstring.
 RESCUABLE_VERDICTS = {"cloud15"}
 
-# PAIR_4985's GPKG geometry is malformed at the source. Its 7 windows are the
-# correct width (0.020122 deg = exactly 224 px) but 0.291 deg tall, about 3,240
-# px -- 14x too tall. GDAL reads the same values, so the defect is in the file,
-# not in how we parse it; the affine fitted when the GPKG was written must have
-# gone wrong for this pair, which has only 5 chips in the corpus to fit against.
-# Dropped rather than scored: a 3,240-px-tall window is not a chip footprint and
-# any invalid fraction computed from it would be meaningless.
+# PAIR_4985's *scl_lost* geometry is malformed. Its 7 windows have the correct
+# width (0.020122 deg = exactly 224 px) but are 0.291 deg tall, about 3,240 px
+# -- 14.5x too tall. GDAL reads the same values, so the defect is in the file.
+#
+# The pair itself is fine: its dynamic_extents GPKG holds 5 perfectly square
+# chips that overlay the raster correctly. The fault is specific to how the
+# scl_lost file was built. build_ungated_buffer_gpkg.py does not store window
+# geometry; it recovers the affine by fitting passed chips' bounds against their
+# (row, col) with np.polyfit. PAIR_4985 has only 5 surviving chips and all 5 sit
+# in ONE row, so the y-slope is fitted from a single distinct x-value and came
+# out 14.5x too large. The cols fit had 5 distinct values and is exact -- hence
+# the correct width and wrong height.
+#
+# That x/y asymmetry is the fingerprint: any pair whose survivors occupy a
+# single row or column is suspect. This is the only one of the 2,195 eligible
+# pairs where the residual guard fired.
 MALFORMED_GEOMETRY_PAIRS = {"PAIR_4985"}
 
 
@@ -118,6 +128,13 @@ def score_pair(pair: str) -> dict:
                               verdicts=RESCUABLE_VERDICTS)
         if table.empty:
             return {"pair": pair, "rows": None, "error": ""}
+
+        # Check the geometry rather than trusting it; see malformed_fraction.
+        bad = malformed_fraction(table)
+        if bad:
+            return {"pair": pair, "rows": None, "malformed": bad,
+                    "error": "malformed geometry: %.0f%% of windows are not "
+                             "chip-sized squares" % (100 * bad)}
 
         boxes = table[["bbox_w", "bbox_s", "bbox_e", "bbox_n"]].to_numpy()
         label = next((paths.LABELS_OUT / pair).glob("*.tif"))

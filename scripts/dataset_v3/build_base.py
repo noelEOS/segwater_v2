@@ -31,6 +31,7 @@ from __future__ import annotations
 
 import argparse
 import datetime as dt
+import sqlite3
 import sys
 
 import pandas as pd
@@ -57,6 +58,11 @@ EXPECTED_QC1 = {"accepted": 2259, "water-correction": 616, "rejected": 304,
                 "snow-correction": 159, "both-corrections": 47}
 EXPECTED_QC2 = {"accepted": 2418, "water-correction": 663, "rejected": 304}
 EXPECTED_SCL11_RELEASED = 206
+
+# Scenes rejected wholesale in round 3 ("select all chips", then "reject"),
+# rather than chip by chip. See detect_scene_rejects.
+EXPECTED_SCENE_REJECTS = 60
+EXPECTED_SCENE_REJECT_CHIPS = 23_210
 
 INDEX_COLUMNS = [
     "pair_name", "chip_id", "selected_for_memmap",
@@ -110,6 +116,61 @@ def load_phase3() -> pd.DataFrame:
     return resolved.rename(columns={"pair_id": "pair_name"})
 
 
+def detect_scene_rejects(resolved: pd.DataFrame) -> set[str]:
+    """Scenes rejected wholesale in round 3, rather than chip by chip.
+
+    The reviewer has no "reject the scene" control and the database records no
+    such flag: ``scene_mode`` is only ``granular`` or ``nir-all``. A scene-wide
+    rejection was done by selecting every chip and rejecting, which leaves a
+    signature this reads back.
+
+    Two independent signatures, both required:
+
+    * every chip of the scene resolves to ``reject``; **and**
+    * every one of those is an *explicit* row in the sparse ``chip_decisions``
+      table. Ordinary per-chip work leaves untouched chips implicit, so a
+      scene with no implicit chips at all was acted on in bulk.
+
+    Corroborated by ``decision_events``, where each of these scenes is a single
+    commit whose payload is uniformly ``reject`` -- one action, not hundreds.
+
+    This is inference from a signature, not a recorded fact. A scene rejected
+    chip by chip until none remained would look identical. The distribution
+    makes that unlikely: only 8 scenes fall between 75% and 100% rejected,
+    then 60 sit exactly at 100%.
+    """
+    database = paths.require(paths.REVIEWER_DB, "reviewer database")
+    with sqlite3.connect("file:%s?mode=ro" % database, uri=True) as connection:
+        explicit = pd.read_sql(
+            "SELECT pair_id, COUNT(*) AS n_explicit_reject FROM chip_decisions "
+            "WHERE action = 'reject' GROUP BY pair_id",
+            connection,
+        )
+
+    chips = resolved.groupby("pair_name").size().rename("n_chips")
+    rejects = (resolved[resolved["resolved_action"] == "reject"]
+               .groupby("pair_name").size().rename("n_reject"))
+    counts = pd.concat([chips, rejects], axis=1).fillna({"n_reject": 0})
+    counts = counts.join(explicit.set_index("pair_id")["n_explicit_reject"]).fillna(
+        {"n_explicit_reject": 0})
+
+    whole = counts["n_reject"] == counts["n_chips"]
+    all_explicit = counts["n_explicit_reject"] == counts["n_chips"]
+    scenes = set(counts.index[whole & all_explicit])
+
+    # A scene that resolves fully to reject but keeps implicit chips would mean
+    # the two signatures disagree, and the inference above would not hold.
+    if int((whole & ~all_explicit).sum()):
+        raise AssertionError(
+            "%d fully-rejected scenes have implicit chips; the bulk-reject "
+            "signature is no longer reliable" % int((whole & ~all_explicit).sum())
+        )
+    if len(scenes) != EXPECTED_SCENE_REJECTS:
+        raise AssertionError("expected %d scene-level rejects, found %d"
+                             % (EXPECTED_SCENE_REJECTS, len(scenes)))
+    return scenes
+
+
 def load_qc_rounds() -> pd.DataFrame:
     """Scene-level verdicts from QC rounds 1 and 2, one row per pair.
 
@@ -154,7 +215,8 @@ def load_qc_rounds() -> pd.DataFrame:
     ]
 
 
-def build(base: pd.DataFrame, resolved: pd.DataFrame, qc: pd.DataFrame) -> tuple[pd.DataFrame, pd.DataFrame]:
+def build(base: pd.DataFrame, resolved: pd.DataFrame, qc: pd.DataFrame,
+          scene_rejects: set[str]) -> tuple[pd.DataFrame, pd.DataFrame]:
     """Join Phase 3 evidence onto the base and seed the v3 decision columns."""
     reviewed_pairs = set(resolved["pair_name"])
 
@@ -200,6 +262,13 @@ def build(base: pd.DataFrame, resolved: pd.DataFrame, qc: pd.DataFrame) -> tuple
     if water != set(table.loc[table["phase3_reviewed"], "pair_name"]):
         raise AssertionError("round-2 water-correction scenes != Phase 3 reviewed scenes")
 
+    # Which round-3 rejections were scene-wide rather than per-chip. A chip
+    # here was not judged on its own merits, so the two are not the same
+    # evidence even though both resolve to `reject`.
+    table["phase3_scene_reject"] = table["pair_name"].isin(scene_rejects)
+    if (table["phase3_scene_reject"] & (table["phase3_action"] != "reject")).any():
+        raise AssertionError("a scene-reject chip does not resolve to reject")
+
     # v3 decision columns. Everything starts `pending`: no chip is included
     # until a stage says so, so the unreviewed majority stays visible in every
     # count instead of being silently assumed good.
@@ -240,6 +309,12 @@ def summarise(table: pd.DataFrame, orphans: pd.DataFrame) -> None:
     print("PHASE 3 ACTION, over memmap-selected chips only")
     for action, n in table["phase3_action"].value_counts().items():
         print("  %-24s  %9d" % (action, n))
+    scene_reject = table["phase3_scene_reject"]
+    print()
+    print("  of the rejects, scene-wide        %9d  (%d scenes)"
+          % (int(scene_reject.sum()), table.loc[scene_reject, "pair_name"].nunique()))
+    print("  of the rejects, per-chip          %9d"
+          % int(((table["phase3_action"] == "reject") & ~scene_reject).sum()))
     print()
     print("  reviewed but NOT memmap-selected  %9d" % len(orphans))
     print("    (excluded before Phase 3; a decision cannot readmit them)")
@@ -266,7 +341,9 @@ def main() -> int:
             % (len(base), base["pair_name"].nunique(), EXPECTED_CHIPS, EXPECTED_PAIRS)
         )
 
-    table, orphans = build(base, load_phase3(), load_qc_rounds())
+    resolved = load_phase3()
+    table, orphans = build(base, resolved, load_qc_rounds(),
+                           detect_scene_rejects(resolved))
     summarise(table, orphans)
 
     if not args.write:

@@ -51,10 +51,13 @@ REVIEWER_SNAPSHOT = (
 )
 
 # The resolved Phase 3 export: one row per chip, with a `resolved_action`
-# column. Prefer this over resolving the sparse database by hand. The space
-# and the "(2)" are part of the filename as shipped.
+# column. Prefer this over resolving the sparse database by hand.
+#
+# Shipped as "segwater_chip_decisions (2).csv"; renamed on 2026-08-31 to drop
+# the browser-download suffix. Content is untouched -- SHA-256 04866ada... still
+# matches KEY_FILES_SHA256.txt, which records the file under its old name.
 RESOLVED_DIR = REVIEWER / "Visual_Quality_Control" / "3rd_round_ee_harmonized"
-RESOLVED_CSV = RESOLVED_DIR / "segwater_chip_decisions (2).csv"
+RESOLVED_CSV = RESOLVED_DIR / "segwater_chip_decisions.csv"
 RESOLVED_JSON = RESOLVED_DIR / "segwater_chip_decisions.json"
 
 # Level 2 labels.

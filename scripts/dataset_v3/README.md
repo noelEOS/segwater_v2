@@ -67,7 +67,7 @@ Prefer the already-resolved export, which carries one row per chip and a
 `resolved_action` column:
 
 ```
-Visual_Quality_Control/3rd_round_ee_harmonized/segwater_chip_decisions (2).csv
+Visual_Quality_Control/3rd_round_ee_harmonized/segwater_chip_decisions.csv
 ```
 
 Verified totals: 663 scenes, 303,834 chip rows, 147,452 `apply-nir`,

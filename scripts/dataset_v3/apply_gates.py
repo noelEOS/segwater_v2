@@ -74,6 +74,18 @@ import pandas as pd
 import paths
 
 EXPECTED_CHIPS = 1_357_354
+
+# Excluded from this lineage by decision, not merely by a failing gate.
+#
+# PAIR_2201 lost 88.7% of its VH band to the Earth Engine log10 export defect
+# (docs/dataset_v3/S1_LOG10_EXPORT_DEFECT.md). Its 871 chips already fail the S1
+# gate, so naming it here changes no count today -- but the exclusion is a
+# decision about the pair, and should not quietly reverse if the defect is ever
+# fixed by a re-export. Noel decided 2026-09-01 to drop it rather than re-export.
+#
+# The other two damaged pairs, PAIR_2301 and PAIR_2145, contribute no chips to
+# the manifest at all and so need no entry.
+DROPPED_PAIRS = {"PAIR_2201"}
 # After all four gates. Gate 4 removes 26,891 coastline chips whose two
 # sensors disagree on tide by more than 10 cm -- all of them recovered.
 TIDE_DELTA_LIMIT_CM = 10.0
@@ -115,7 +127,10 @@ def main() -> int:
         raise AssertionError("%d coastline chips have no tide delta to judge"
                              % int((on_coast & delta.isna()).sum()))
 
-    passes = qc_ok & s1_ok & tide_ok
+    # A dropped pair is out regardless of what its chips measure.
+    kept_pair = ~manifest["pair_name"].isin(DROPPED_PAIRS)
+
+    passes = qc_ok & s1_ok & tide_ok & kept_pair
 
     manifest["passes_all_gates"] = passes
 
@@ -123,6 +138,7 @@ def main() -> int:
     print("  LABEL side  QC verdict + invalid mask          %9d" % int(qc_ok.sum()))
     print("  INPUT side  S1 complete (no fill, no damage)   %9d" % int(s1_ok.sum()))
     print("  BOTH sides  tide agrees on coastline chips     %9d" % int(tide_ok.sum()))
+    print("  DECISION    pair not dropped                    %9d" % int(kept_pair.sum()))
     print("  ---")
     print("  passes_all_gates                               %9d  (%.4f%%)"
           % (int(passes.sum()), 100 * float(passes.mean())))
@@ -133,6 +149,10 @@ def main() -> int:
     print("    %-24s %9d  (of %d coastline chips)"
           % ("tide delta > %.0f cm" % TIDE_DELTA_LIMIT_CM,
              int((~tide_ok).sum()), int(on_coast.sum())))
+    for pair in sorted(DROPPED_PAIRS):
+        n = int((manifest["pair_name"] == pair).sum())
+        if n:
+            print("    %-24s %9d  (dropped by decision)" % (pair, n))
     print()
     print("  of the passing chips:")
     print("    already cut (in an old memmap)   %9d"

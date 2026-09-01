@@ -9,6 +9,18 @@ each other rather than merely coexisting.
 
 No fraction is derived here. See ``count_label_classes.py`` for why the
 denominator is left to the consumer.
+
+The composition summary uses a **1% tolerance**, not strict equality. Labels
+carry speckle: 305,690 chips -- 22.55% of the passing corpus -- are 99% or more
+one class yet not pure, differing by a median of 31 pixels out of 50,176, and
+23,032 differ by exactly one. Calling those "mixed" nearly doubles the apparent
+mixed fraction (48.5% strict against 26.0% at 1%) and describes the speckle
+rather than the scene.
+
+1% is where the curve flattens rather than an arbitrary round number: relaxing
+0% to 1% reclassifies ~350k chips, while 1% to 5% moves only ~100k more. The
+speckle sits well below 1%. Both the strict and tolerant counts are printed, so
+the choice is visible instead of assumed.
 """
 
 from __future__ import annotations
@@ -72,14 +84,28 @@ def main() -> int:
           % (share.median(), share.quantile(0.10), share.quantile(0.25),
              share.quantile(0.75), share.quantile(0.90)))
     print()
-    print("  composition of the passing corpus (%s chips):" % "{:,}".format(int(passing.sum())))
-    pure_water = int((merged.loc[passing, "n_water"] == CHIP_PIXELS).sum())
-    pure_land = int((merged.loc[passing, "n_land"] == CHIP_PIXELS).sum())
-    mixed = int(passing.sum()) - pure_water - pure_land
-    for label, n in (("all water", pure_water), ("all land", pure_land),
-                     ("mixed / partly invalid", mixed)):
-        print("     %-24s %10s  (%.2f%%)"
-              % (label, "{:,}".format(n), 100 * n / max(int(passing.sum()), 1)))
+    n_pass = int(passing.sum())
+    share_pass = (merged.loc[passing, "n_water"] / valid[passing])
+    print("  composition of the passing corpus (%s chips), by tolerance on the"
+          % "{:,}".format(n_pass))
+    print("  water share of valid pixels:")
+    print("     %-9s %13s %13s %13s" % ("tolerance", "~all water", "~all land", "mixed"))
+    for tol in (0.0, 0.005, 0.01, 0.05):
+        water = int((share_pass >= 1 - tol).sum())
+        land = int((share_pass <= tol).sum())
+        mixed = n_pass - water - land
+        mark = "  <- reported" if tol == 0.01 else ""
+        print("     %-9s %13s %13s %13s  (%.1f%% mixed)%s"
+              % ("%.1f%%" % (100 * tol), "{:,}".format(water), "{:,}".format(land),
+                 "{:,}".format(mixed), 100 * mixed / n_pass, mark))
+    print()
+    minority = merged.loc[passing, ["n_water", "n_land"]].min(axis=1)
+    near = ((share_pass >= 0.99) | (share_pass <= 0.01)) & (minority > 0)
+    print("     %s chips (%.2f%%) are >=99%% one class but NOT pure -- speckle."
+          % ("{:,}".format(int(near.sum())), 100 * float(near.mean())))
+    print("     their minority pixels: median %d of %d; %s chips differ by exactly 1."
+          % (minority[near].median(), CHIP_PIXELS,
+             "{:,}".format(int((minority == 1).sum()))))
 
     if not args.write:
         print("\n(dry run; pass --write to save)")

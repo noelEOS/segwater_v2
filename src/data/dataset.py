@@ -20,8 +20,10 @@ class MemmapSpec:
 
 class CoastalMemmapDataset(Dataset):
     """Reads samples from a .memmap with shape (N, 3, H, W):
-       [0]=VV (float32), [1]=VH (float32), [2]=mask in {0,1,255} float32.
-       Returns dict(pixel_values: FloatTensor [2,H,W], labels: LongTensor [H,W]).
+       [0]=VV, [1]=VH, [2]=mask in {0,1,255}, all stored as spec.dtype
+       (float32 for the legacy lineages, float16 for dataset_v3).
+       Samples are always returned as float32 regardless of the on-disk dtype:
+       dict(pixel_values: FloatTensor [2,H,W], labels: LongTensor [H,W]).
     """
 
     def __init__(
@@ -66,9 +68,12 @@ class CoastalMemmapDataset(Dataset):
         x_np = arr[: self.spec.in_channels]  # (2,H,W)
         y_np = arr[self.spec.mask_channel_index]  # (H,W)
         
-        # Make a writable copy to avoid PyTorch warning about non-writable NumPy
-        x = torch.from_numpy(np.array(x_np, copy=True))  # float32 tensor, owns memory
-        # keep 255 as ignore; convert to long without copying where possible
+        # Writable copy (avoids the non-writable-NumPy warning) with an explicit
+        # float32 cast: without it an fp16 memmap would silently hand the model
+        # half-precision tensors. For fp32 memmaps the cast is a no-op.
+        x = torch.from_numpy(np.array(x_np, dtype=np.float32, copy=True))
+        # keep 255 as ignore; convert to long without copying where possible.
+        # {0,1,255} are exact in fp16, so this cast is lossless for either dtype.
         y = torch.from_numpy(y_np.astype(np.int64, copy=False))
         
         if self.transforms is not None:

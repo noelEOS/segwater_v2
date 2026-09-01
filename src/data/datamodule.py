@@ -17,6 +17,7 @@ class CoastalDataModule:
         test_file: str = "test.memmap",
         H: int = 224,
         W: int = 224,
+        dtype: str = "float32",
         batch_size: int = 16,
         val_batch_size: Optional[int] = None,
         num_workers: int = 4,
@@ -31,6 +32,11 @@ class CoastalDataModule:
         self.test_path = os.path.join(root_dir, test_file)
         self.H = H
         self.W = W
+        # On-disk dtype of the memmaps ("float32" legacy, "float16" dataset_v3).
+        # This MUST match the files: the dataset derives N from filesize /
+        # bytes-per-sample, so a wrong dtype silently doubles or halves the
+        # sample count instead of failing.
+        self.dtype = dtype
         self.batch_size = batch_size
         self.val_batch_size = val_batch_size or batch_size
         self.num_workers = num_workers
@@ -51,13 +57,15 @@ class CoastalDataModule:
     def setup(self):
         """Initializes dataset objects (but delays memmap opening per process)."""
         aug = CoastalAug(**self.aug_params) if self.augment else None
-        
+        import numpy as np
+        dtype = np.dtype(self.dtype)
+
         if os.path.exists(self.train_path):
-            self.train_ds = CoastalMemmapDataset(MemmapSpec(self.train_path, H=self.H, W=self.W), transforms=aug)
+            self.train_ds = CoastalMemmapDataset(MemmapSpec(self.train_path, H=self.H, W=self.W, dtype=dtype), transforms=aug)
         if os.path.exists(self.val_path):
-            self.val_ds = CoastalMemmapDataset(MemmapSpec(self.val_path, H=self.H, W=self.W), transforms=None)
+            self.val_ds = CoastalMemmapDataset(MemmapSpec(self.val_path, H=self.H, W=self.W, dtype=dtype), transforms=None)
         if os.path.exists(self.test_path):
-            self.test_ds = CoastalMemmapDataset(MemmapSpec(self.test_path, H=self.H, W=self.W), transforms=None)
+            self.test_ds = CoastalMemmapDataset(MemmapSpec(self.test_path, H=self.H, W=self.W, dtype=dtype), transforms=None)
 
     def _dl(self, dataset, batch_size, shuffle=False):
         if dataset is None:

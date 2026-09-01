@@ -1,6 +1,10 @@
 memmap_root: /home/jovyan/shared/noelivanulloa/globalpairs/OTHER_PROJECTS/Global_Sen12Coast/PRODUCTION_DATASET
 H: 224
 W: 224
+# On-disk dtype of the memmaps. The legacy lineages are float32; the
+# dataset_v3 memmaps are float16 (set dtype: float16 with their root).
+# Must match the files -- sample count is derived from file size.
+dtype: float32
 batch_size: 256
 val_batch_size: 256
 num_workers: 8

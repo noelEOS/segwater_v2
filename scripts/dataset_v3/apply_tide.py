@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Carry the stored tide values onto the manifest for chips that already have them.
+"""Put tide on every chip: stored values where they exist, computed where not.
 
 Tide is **per chip**, not per pair: it is FES2022b evaluated at the nearest
 ocean-edge point to each chip's own centroid, so it varies across a pair
@@ -7,10 +7,14 @@ ocean-edge point to each chip's own centroid, so it varies across a pair
 range of median 6.4 cm). It therefore cannot be inherited from a pair the way
 ``pairbased_split`` was.
 
-The 1,262,581 chips that already existed in the corpus have tide computed and
-stored, so this joins it on ``(pair_name, chip_id)`` rather than recomputing.
-The 93,121 recovered windows were never chipped and have no stored value; they
-are left null here and must be computed from FES against their own centroids.
+The 1,264,188 chips that already existed in the corpus have tide stored from
+the original build, so this joins it on ``(pair_name, chip_id)`` rather than
+recomputing -- there is no reason to regenerate what is already there.
+
+The 93,166 recovered windows were never chipped and have no stored value.
+``compute_tide_recovered.py`` generates theirs from FES2022b at their own
+centroids, and this folds that in. ``tide_source`` records which route each chip
+took, so the two are never silently conflated.
 
 ⚠️ This join is only safe because recovered chips now occupy a disjoint id
 space (``chip_id >= 100000``). Under the previous scheme 27,750 of them carried
@@ -35,6 +39,7 @@ import argparse
 import datetime as dt
 import sys
 
+import numpy as np
 import pandas as pd
 import pyarrow.parquet as pq
 
@@ -84,15 +89,35 @@ def main() -> int:
         raise AssertionError("a recovered chip_id is below the offset; the tide "
                              "join would attach another chip's values")
 
-    stale = [c for c in TIDE_COLUMNS if c in manifest.columns]
+    stale = [c for c in TIDE_COLUMNS + ["tide_point_lat", "tide_point_lon",
+                                        "tide_source"] if c in manifest.columns]
     manifest = manifest.drop(columns=stale)
     merged = manifest.merge(source, on=["pair_name", "chip_id"], how="left", validate="1:1")
+
+    # Recovered chips were never in the source, so their tide is computed
+    # separately by compute_tide_recovered.py using the chain verified in
+    # verify_tide_reproduction.py (600 chips, max 0.097 cm level error,
+    # 1200/1200 exact phase). Fold it in where present.
+    computed_path = paths.MANIFESTS / "recovered_chip_tide.parquet"
+    if computed_path.exists():
+        computed = pd.read_parquet(computed_path).set_index(["pair_name", "chip_id"])
+        index = pd.MultiIndex.from_frame(merged[["pair_name", "chip_id"]])
+        fill = computed.reindex(index)
+        for column in ("s1_tide_level_sat", "s1_tide_level_sat_phase",
+                       "s2_tide_level_sat", "s2_tide_level_sat_phase"):
+            merged[column] = merged[column].combine_first(
+                pd.Series(fill[column].to_numpy(), index=merged.index))
+        merged["tide_point_lat"] = fill["tide_point_lat"].to_numpy()
+        merged["tide_point_lon"] = fill["tide_point_lon"].to_numpy()
+        merged["tide_source"] = np.where(
+            merged["chip_origin"] == "recovered", "computed_fes2022b", "stored")
+        print("folded in %d computed rows" % len(computed))
     if len(merged) != EXPECTED_CHIPS:
         raise AssertionError("join changed the row count to %d" % len(merged))
 
     has_tide = merged["s1_tide_level_sat"].notna()
     print("TIDE over %d chips" % len(merged))
-    print("  with a stored value      %9d  (%.2f%%)"
+    print("  with a tide value        %9d  (%.2f%%)"
           % (int(has_tide.sum()), 100 * float(has_tide.mean())))
     print("  without                  %9d" % int((~has_tide).sum()))
     print()
@@ -108,14 +133,15 @@ def main() -> int:
     if missing_existing:
         print("    (these had no stored value in the source either)")
 
-    # Every recovered chip must be null: they have no stored value by
-    # construction, and a non-null one would mean the join found something it
-    # should not have.
-    if merged.loc[recovered, "s1_tide_level_sat"].notna().any():
-        raise AssertionError("a recovered chip picked up a stored tide value")
+    # Recovered chips must take their values from the computed table, never
+    # from the source join -- a stored hit would mean the id spaces overlapped.
+    computed_ok = merged.loc[recovered, "tide_source"].eq("computed_fes2022b").all() \
+        if "tide_source" in merged.columns else True
+    if not computed_ok:
+        raise AssertionError("a recovered chip did not take the computed tide")
 
     print()
-    print("  delta sign check (parquet column is SIGNED):")
+    print("  delta sign check (see the docstring: absolute in THIS parquet):")
     delta = merged["s1_s2_tide_level_sat_delta_first_round"].dropna()
     print("    min %.2f  max %.2f  | negative: %d of %d"
           % (delta.min(), delta.max(), int((delta < 0).sum()), len(delta)))

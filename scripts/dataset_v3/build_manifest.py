@@ -36,6 +36,28 @@ import paths
 EXPECTED_EXISTING = 1_264_188
 THRESHOLD = 0.15
 
+# Recovered windows get chip_ids in a disjoint space, starting here.
+#
+# The first attempt continued each pair's numbering from its highest EXISTING
+# chip_id. That was wrong, and quietly so: the base table holds only
+# memmap-SELECTED chips, so the max was taken over a filtered view rather than
+# over the id space. PAIR_4851 has chip_ids 1..2305 in the source parquet but
+# only 846 selected, topping out at 1008 -- so numbering resumed at 1009 and
+# walked straight into ids already used by non-selected chips. 27,750 of 93,166
+# recovered chips collided, 27,686 of them with a non-selected chip.
+#
+# The manifest's own uniqueness check passed throughout, because within the
+# manifest the keys really were unique. The damage was latent: any join back to
+# the source -- for tide, or anything else -- would silently attach a different
+# chip's data.
+#
+# An offset makes the collision impossible by construction rather than by
+# getting the arithmetic right. The true maximum chip_id across every parquet in
+# DATABASE/ is 4,634, so 100,000 clears it by 95,366 and leaves the two id
+# spaces trivially separable by eye as well as in code.
+RECOVERED_ID_OFFSET = 100_000
+MAX_SOURCE_CHIP_ID = 4_634
+
 # Columns a recovered window cannot have, and why.
 PHASE3_COLUMNS = ["phase3_source_category", "phase3_scene_mode", "phase3_action",
                   "phase3_committed_at", "phase3_revision", "phase3_reviewed",
@@ -60,12 +82,12 @@ def load_recovered(existing: pd.DataFrame) -> pd.DataFrame:
         paths.require(paths.MANIFESTS / "rescue_candidates.parquet", "rescue candidates"))
     got = rescue[rescue["label_covers"] & (rescue["invalid_frac"] <= THRESHOLD)].copy()
 
-    # Fresh chip ids, continuing each pair's existing numbering so
-    # (pair_name, chip_id) stays one uniform key across both populations.
-    highest = existing.groupby("pair_name")["chip_id"].max()
+    # Fresh chip ids in a disjoint space: RECOVERED_ID_OFFSET + a per-pair
+    # counter. See the constant for why this is an offset and not a continuation
+    # of the pair's existing numbering.
     got = got.sort_values(["pair_name", "row", "col"]).reset_index(drop=True)
-    start = got["pair_name"].map(highest).fillna(0).astype("int64")
-    got["chip_id"] = (start + got.groupby("pair_name").cumcount() + 1).astype("int64")
+    got["chip_id"] = (RECOVERED_ID_OFFSET + got.groupby("pair_name").cumcount() + 1
+                      ).astype("int64")
 
     # Inherit the pair's split -- but only where a pair HAS one split.
     #
@@ -128,6 +150,16 @@ def main() -> int:
 
     if manifest.duplicated(["pair_name", "chip_id"]).any():
         raise AssertionError("(pair_name, chip_id) is not unique in the manifest")
+    # The id spaces must not meet. Uniqueness within the manifest is not enough
+    # -- that held while the ids were colliding with the source corpus.
+    existing_ids = manifest.loc[manifest["chip_origin"] == "existing", "chip_id"]
+    recovered_ids = manifest.loc[manifest["chip_origin"] == "recovered", "chip_id"]
+    if len(existing_ids) and existing_ids.max() > MAX_SOURCE_CHIP_ID:
+        raise AssertionError("an existing chip_id exceeds the known source maximum %d"
+                             % MAX_SOURCE_CHIP_ID)
+    if len(recovered_ids) and recovered_ids.min() <= RECOVERED_ID_OFFSET:
+        raise AssertionError("a recovered chip_id fell below the offset %d"
+                             % RECOVERED_ID_OFFSET)
     if (manifest["v3_status"] != "include").any():
         raise AssertionError("the manifest must contain only included chips")
     if (manifest["invalid_frac"] > THRESHOLD).any():

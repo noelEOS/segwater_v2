@@ -439,7 +439,7 @@ def main() -> int:
         return 0
 
     paths.ensure_out()
-    figdata = paths.QC / "%s_profile_figdata" % target_split
+    figdata = paths.QC / ("%s_profile_figdata" % target_split)
     figdata.mkdir(parents=True, exist_ok=True)
 
     # --- aggregate exports for the figures (no chip-level egress) ------------

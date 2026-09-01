@@ -98,7 +98,7 @@ def main() -> int:
     # separately by compute_tide_recovered.py using the chain verified in
     # verify_tide_reproduction.py (600 chips, max 0.097 cm level error,
     # 1200/1200 exact phase). Fold it in where present.
-    computed_path = paths.MANIFESTS / "recovered_chip_tide.parquet"
+    computed_path = paths.MANIFESTS / "computed_chip_tide.parquet"
     if computed_path.exists():
         computed = pd.read_parquet(computed_path).set_index(["pair_name", "chip_id"])
         index = pd.MultiIndex.from_frame(merged[["pair_name", "chip_id"]])
@@ -109,8 +109,10 @@ def main() -> int:
                 pd.Series(fill[column].to_numpy(), index=merged.index))
         merged["tide_point_lat"] = fill["tide_point_lat"].to_numpy()
         merged["tide_point_lon"] = fill["tide_point_lon"].to_numpy()
-        merged["tide_source"] = np.where(
-            merged["chip_origin"] == "recovered", "computed_fes2022b", "stored")
+        # A chip took the computed route if the source join left it null.
+        was_null = merged["s1_tide_level_sat"].isna() | (
+            pd.MultiIndex.from_frame(merged[["pair_name", "chip_id"]]).isin(computed.index))
+        merged["tide_source"] = np.where(was_null, "computed_fes2022b", "stored")
         print("folded in %d computed rows" % len(computed))
     if len(merged) != EXPECTED_CHIPS:
         raise AssertionError("join changed the row count to %d" % len(merged))
@@ -135,10 +137,12 @@ def main() -> int:
 
     # Recovered chips must take their values from the computed table, never
     # from the source join -- a stored hit would mean the id spaces overlapped.
-    computed_ok = merged.loc[recovered, "tide_source"].eq("computed_fes2022b").all() \
-        if "tide_source" in merged.columns else True
-    if not computed_ok:
-        raise AssertionError("a recovered chip did not take the computed tide")
+    if "tide_source" in merged.columns:
+        if not merged.loc[recovered, "tide_source"].eq("computed_fes2022b").all():
+            raise AssertionError("a recovered chip did not take the computed tide")
+        if merged["s1_tide_level_sat"].isna().any():
+            raise AssertionError("%d chips still have no tide level"
+                                 % int(merged["s1_tide_level_sat"].isna().sum()))
 
     print()
     print("  delta sign check (see the docstring: absolute in THIS parquet):")

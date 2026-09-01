@@ -1,9 +1,19 @@
 #!/usr/bin/env python3
-"""Compute FES2022b tide for the recovered chips, which have no stored value.
+"""Compute FES2022b tide for every chip that has no stored value.
 
-The 93,166 rescued windows were never chipped, so nothing computed tide for
-them. Existing chips carry theirs from the original build (``apply_tide.py``
-joins those); these must be generated.
+Two populations, same treatment:
+
+* the **93,166 recovered windows**, which were never chipped, so nothing ever
+  computed tide for them;
+* **2,108 existing chips** across 123 pairs whose tide is null in *every* parquet
+  of the lineage -- all ten that carry the column. It was never computed for
+  them rather than lost in a join. Distance does not explain it: they sit a
+  median 2.91 km from the nearest ocean-edge point against 3.97 km for chips
+  that do have tide. None intersects the GCL coastline, so the tide gate never
+  needed them, which is presumably why the gap went unnoticed.
+
+Everything else carries tide from the original build; ``apply_tide.py`` joins
+those rather than recomputing them.
 
 The chain is the one verified in ``verify_tide_reproduction.py``, which
 reproduced stored values on 600 chips x 2 sensors at max 0.097 cm level error
@@ -65,7 +75,14 @@ from verify_tide_reproduction import (FES_ROOT, GRID_EPOCH, HOURS, SOURCE,
                                       STEP_MIN, edge_points, label_phases,
                                       snap_window)
 
-EXPECTED_RECOVERED = 93_166
+# Chips that have never had tide computed, by origin, on a manifest where none
+# has been filled in yet. The existing ones are a genuine gap in the source
+# lineage, not a join failure -- see the module docstring.
+#
+# This is a CEILING, not an equality: the script is resumable, so a rerun after
+# a partial pass legitimately sees fewer. Only an origin appearing that is not
+# in this dict, or a count above it, means something changed.
+MAX_MISSING = {"recovered": 93_166, "existing": 2_108}
 RECOVERED_ID_OFFSET = 100_000
 
 # Padding around a pair's chips for the FES bbox, in degrees. Generous: the
@@ -212,13 +229,22 @@ def main() -> int:
         paths.require(paths.MANIFESTS / "dataset_v3_manifest.parquet", "v3 manifest"),
         columns=["pair_name", "chip_id", "chip_origin", "bbox_w", "bbox_s",
                  "bbox_e", "bbox_n", "system:time_start_s1", "s1_tide_level_sat"])
-    recovered = manifest[manifest["chip_origin"] == "recovered"].copy()
-    if not args.limit and len(recovered) != EXPECTED_RECOVERED:
-        raise AssertionError("expected %d recovered chips, found %d"
-                             % (EXPECTED_RECOVERED, len(recovered)))
-    if recovered["s1_tide_level_sat"].notna().any():
-        raise AssertionError("a recovered chip already carries a stored tide value")
-    if (recovered["chip_id"] < RECOVERED_ID_OFFSET).any():
+    # Everything without a stored tide value, whatever its origin.
+    recovered = manifest[manifest["s1_tide_level_sat"].isna()].copy()
+    by_origin = recovered["chip_origin"].value_counts().to_dict()
+    unknown = set(by_origin) - set(MAX_MISSING)
+    if unknown:
+        raise AssertionError("chips missing tide from an unexpected origin: %s"
+                             % sorted(unknown))
+    for origin, n in by_origin.items():
+        if n > MAX_MISSING[origin]:
+            raise AssertionError("%s chips missing tide rose to %d, above the "
+                                 "known %d" % (origin, n, MAX_MISSING[origin]))
+    if recovered.empty:
+        print("every chip already has tide; nothing to compute")
+        return 0
+    is_recovered = recovered["chip_origin"] == "recovered"
+    if (recovered.loc[is_recovered, "chip_id"] < RECOVERED_ID_OFFSET).any():
         raise AssertionError("a recovered chip_id is below the offset")
 
     source = pq.read_table(paths.DB_SLIM / SOURCE,
@@ -245,8 +271,8 @@ def main() -> int:
 
     seam = [(p, g) for p, g in groups if straddles(g)]
     plain = [(p, g) for p, g in groups if not straddles(g)]
-    print("computing tide for %d chips across %d pairs"
-          % (sum(len(g) for _, g in groups), len(groups)))
+    print("computing tide for %d chips across %d pairs  %s"
+          % (sum(len(g) for _, g in groups), len(groups), by_origin))
     print("  %d pairs by bbox (%d workers), %d straddling lon 0 by global atlas "
           "(%d workers)" % (len(plain), args.jobs, len(seam), args.global_jobs))
 
@@ -300,9 +326,22 @@ def main() -> int:
         return 0
 
     paths.ensure_out()
-    target = paths.MANIFESTS / "recovered_chip_tide.parquet"
+    target = paths.MANIFESTS / "computed_chip_tide.parquet"
+
+    # Accumulate rather than replace. The script only ever computes chips that
+    # are still missing tide, so a second run covers a different population --
+    # replacing would silently discard the first run's work.
+    if target.exists():
+        previous = pd.read_parquet(target)
+        overlap = pd.MultiIndex.from_frame(previous[["pair_name", "chip_id"]]).isin(
+            pd.MultiIndex.from_frame(table[["pair_name", "chip_id"]]))
+        table = pd.concat([previous[~overlap], table], ignore_index=True)
+        print("\nmerged with %d existing rows" % int((~overlap).sum()))
+    if table.duplicated(["pair_name", "chip_id"]).any():
+        raise AssertionError("(pair_name, chip_id) is not unique in the tide table")
+
     table.to_parquet(target, index=False, compression="zstd")
-    print("\nwrote %s  (%d rows)" % (target, len(table)))
+    print("wrote %s  (%d rows)" % (target, len(table)))
     return 0
 
 

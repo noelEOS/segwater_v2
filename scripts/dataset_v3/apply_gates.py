@@ -19,6 +19,28 @@ only when both have.
    footprint edge) or *damage* (0 in one band, lost to the Earth Engine
    ``log10`` export defect).
 
+**Both sides together** -- the two sensors must see the same water:
+
+4. **Tide agreement on coastline chips.** A chip that intersects the GCL
+   coastline must have ``|s1_tide - s2_tide| <= 10 cm``. Where a waterline runs
+   through the chip, a tide difference between the SAR acquisition and the
+   optical one moves that waterline, so the label no longer describes the input.
+   Away from a coastline there is no waterline to displace, so the rule does not
+   apply -- which is why it is scoped to the flag rather than applied corpus-wide.
+
+⚠️ Gate 4 is **not** the original build's retention filter, and must not be
+described as it. That filter was *pair*-level, on the ``*_first_round`` columns.
+``intersects_gcl_coastline`` was never a gate there -- it varies within 2,911 of
+3,015 pairs, so it cannot express a pair-level decision. Gate 4 is a new
+chip-level rule for this lineage.
+
+It bites only on recovered chips, and that asymmetry is expected rather than
+suspicious. Existing chips inherit a pair that passed the pair-level filter and
+sit near its anchor, so all 195,956 of their coastline chips are already within
+10 cm -- max 10.00, zero exceedances. Recovered windows come from the same
+passing pairs but sit further from the anchor, so 29.82% of their coastline
+chips drift past it.
+
 Fill and damage differ in provenance, not in fitness: either way the model would
 read absence where it expects backscatter. The distinction is preserved in
 ``s1_status`` because it matters for deciding whether to re-export, but it does
@@ -49,8 +71,10 @@ import pandas as pd
 import paths
 
 EXPECTED_CHIPS = 1_357_354
-# clean only. Fill and damage both fail the input gate; see the docstring.
-EXPECTED_PASSING = 1_355_702
+# After all four gates. Gate 4 removes 26,891 coastline chips whose two
+# sensors disagree on tide by more than 10 cm -- all of them recovered.
+TIDE_DELTA_LIMIT_CM = 10.0
+EXPECTED_PASSING = 1_328_811
 
 
 
@@ -68,7 +92,8 @@ def main() -> int:
     if len(manifest) != EXPECTED_CHIPS:
         raise AssertionError("manifest is %d chips, expected %d"
                              % (len(manifest), EXPECTED_CHIPS))
-    for column in ("v3_status", "invalid_frac", "s1_status"):
+    for column in ("v3_status", "invalid_frac", "s1_status",
+                   "intersects_gcl_coastline", "s1_tide_level_sat"):
         if column not in manifest.columns:
             raise AssertionError("%s missing; run the earlier stages first" % column)
 
@@ -78,20 +103,33 @@ def main() -> int:
     s1_ok = manifest["s1_status"] == "clean"
     if args.allow_fill:
         s1_ok |= manifest["s1_status"] == "fill"
-    passes = qc_ok & s1_ok
+    # Gate 4: a coastline chip's two sensors must agree on tide, or the
+    # waterline moved between them and the label no longer matches the input.
+    delta = (manifest["s1_tide_level_sat"] - manifest["s2_tide_level_sat"]).abs()
+    on_coast = manifest["intersects_gcl_coastline"].fillna(False).astype(bool)
+    tide_ok = ~on_coast | (delta <= TIDE_DELTA_LIMIT_CM)
+    if (on_coast & delta.isna()).any():
+        raise AssertionError("%d coastline chips have no tide delta to judge"
+                             % int((on_coast & delta.isna()).sum()))
+
+    passes = qc_ok & s1_ok & tide_ok
 
     manifest["passes_all_gates"] = passes
 
     print("GATES over %d chips" % len(manifest))
     print("  LABEL side  QC verdict + invalid mask          %9d" % int(qc_ok.sum()))
     print("  INPUT side  S1 complete (no fill, no damage)   %9d" % int(s1_ok.sum()))
+    print("  BOTH sides  tide agrees on coastline chips     %9d" % int(tide_ok.sum()))
     print("  ---")
     print("  passes_all_gates                               %9d  (%.4f%%)"
           % (int(passes.sum()), 100 * float(passes.mean())))
     print()
     print("  failing, by reason:")
-    for status, n in manifest.loc[~passes, "s1_status"].value_counts().items():
+    for status, n in manifest.loc[~passes & ~s1_ok, "s1_status"].value_counts().items():
         print("    s1_status=%-14s %9d" % (status, n))
+    print("    %-24s %9d  (of %d coastline chips)"
+          % ("tide delta > %.0f cm" % TIDE_DELTA_LIMIT_CM,
+             int((~tide_ok).sum()), int(on_coast.sum())))
     print()
     print("  of the passing chips:")
     print("    already cut (in an old memmap)   %9d"

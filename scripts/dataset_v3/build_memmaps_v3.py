@@ -250,9 +250,12 @@ def main() -> int:
     usage = shutil.disk_usage(os.path.dirname(os.path.abspath(args.dst_root)) or ".")
     print("destination %s: need %.1f GB, free %.1f GB"
           % (args.dst_root, total_bytes / 1e9, usage.free / 1e9))
-    if usage.free < total_bytes + 10e9:
-        raise AssertionError("insufficient free space: need %.1f GB + 10 GB margin, "
-                             "have %.1f GB" % (total_bytes / 1e9, usage.free / 1e9))
+    # With --limit the memmaps are created full-size but SPARSE -- only the
+    # written rows allocate -- so the full-corpus requirement does not apply.
+    required = total_bytes + 10e9 if args.limit is None else 20e9
+    if usage.free < required:
+        raise AssertionError("insufficient free space: need %.1f GB, have %.1f GB"
+                             % (required / 1e9, usage.free / 1e9))
 
     if args.dry_run:
         for split in SPLITS:

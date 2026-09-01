@@ -34,12 +34,15 @@ described as it. That filter was *pair*-level, on the ``*_first_round`` columns.
 3,015 pairs, so it cannot express a pair-level decision. Gate 4 is a new
 chip-level rule for this lineage.
 
-It bites only on recovered chips, and that asymmetry is expected rather than
-suspicious. Existing chips inherit a pair that passed the pair-level filter and
-sit near its anchor, so all 195,956 of their coastline chips are already within
-10 cm -- max 10.00, zero exceedances. Recovered windows come from the same
-passing pairs but sit further from the anchor, so 29.82% of their coastline
-chips drift past it.
+Every chip this gate removes is a recovered chip; no existing chip fails it.
+
+  existing   195,956 coastline chips, 0 above 10 cm (max 10.00)
+  recovered   90,164 coastline chips, 26,891 above 10 cm (29.8%)
+
+The existing chips were already compliant because the original build applied a
+tide filter at pair level, and a chip's tide is close to its pair's value. The
+recovered chips belong to those same pairs, so why 29.8% of them exceed 10 cm
+has not been measured -- do not assume a cause.
 
 Fill and damage differ in provenance, not in fitness: either way the model would
 read absence where it expects backscatter. The distinction is preserved in

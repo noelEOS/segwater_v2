@@ -61,6 +61,22 @@ def tvd(p: pd.Series, q: pd.Series) -> float:
                         - q.reindex(keys, fill_value=0.0)).abs().sum())
 
 
+def to_md(frame: pd.DataFrame) -> str:
+    """Minimal markdown table -- pandas' to_markdown needs tabulate, which the
+    VM env does not carry, and a dependency is not worth a table."""
+    frame = frame.reset_index()
+    cells = [[str(c) for c in frame.columns]]
+    cells += [["%s" % ("{:,}".format(v) if isinstance(v, (int, np.integer)) else v)
+               for v in row] for row in frame.itertuples(index=False)]
+    widths = [max(len(r[i]) for r in cells) for i in range(len(cells[0]))]
+    def fmt(row):
+        return "| " + " | ".join(v.rjust(w) for v, w in zip(row, widths)) + " |"
+    lines = [fmt(cells[0]),
+             "|" + "|".join("-" * (w + 2) for w in widths) + "|"]
+    lines += [fmt(r) for r in cells[1:]]
+    return "\n".join(lines)
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--write", action="store_true")
@@ -123,7 +139,7 @@ def main() -> int:
                           values="chip_id", aggfunc="size", fill_value=0)
     pivot = pivot.reindex(columns=["train", "val", "test"], fill_value=0)
     pivot["total"] = pivot.sum(axis=1)
-    emit(pivot.to_markdown())
+    emit(to_md(pivot))
     emit("")
 
     emit("## Composition vs corpus (total variation distance)")
@@ -143,7 +159,7 @@ def main() -> int:
     comp = m.pivot_table(index="split_v3", columns="cls", values="chip_id",
                          aggfunc="size", fill_value=0)
     comp = comp.div(comp.sum(axis=1), axis=0)
-    emit((100 * comp).round(2).to_markdown())
+    emit(to_md((100 * comp).round(2)))
     emit("")
 
     emit("## Disclosures")

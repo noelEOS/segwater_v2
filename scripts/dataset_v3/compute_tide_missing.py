@@ -5,8 +5,10 @@ Two populations, same treatment:
 
 * the **93,166 recovered windows**, which were never chipped, so nothing ever
   computed tide for them;
-* **2,108 existing chips** across 123 pairs whose tide is null in *every* parquet
-  of the lineage -- all ten that carry the column. It was never computed for
+* **2,995 existing chips** whose tide is null in *every* parquet of the lineage
+  -- all ten that carry the column. 2,108 of them are missing both sensors;
+  a further 887 across 59 pairs have a stored S1 value but no S2 one, so the two
+  sensors are independently absent and selecting on S1 alone misses them. It was never computed for
   them rather than lost in a join. Distance does not explain it: they sit a
   median 2.91 km from the nearest ocean-edge point against 3.97 km for chips
   that do have tide. None intersects the GCL coastline, so the tide gate never
@@ -82,7 +84,7 @@ from verify_tide_reproduction import (FES_ROOT, GRID_EPOCH, HOURS, SOURCE,
 # This is a CEILING, not an equality: the script is resumable, so a rerun after
 # a partial pass legitimately sees fewer. Only an origin appearing that is not
 # in this dict, or a count above it, means something changed.
-MAX_MISSING = {"recovered": 93_166, "existing": 2_108}
+MAX_MISSING = {"recovered": 93_166, "existing": 2_995}
 RECOVERED_ID_OFFSET = 100_000
 
 # Padding around a pair's chips for the FES bbox, in degrees. Generous: the
@@ -228,9 +230,13 @@ def main() -> int:
     manifest = pd.read_parquet(
         paths.require(paths.MANIFESTS / "dataset_v3_manifest.parquet", "v3 manifest"),
         columns=["pair_name", "chip_id", "chip_origin", "bbox_w", "bbox_s",
-                 "bbox_e", "bbox_n", "system:time_start_s1", "s1_tide_level_sat"])
-    # Everything without a stored tide value, whatever its origin.
-    recovered = manifest[manifest["s1_tide_level_sat"].isna()].copy()
+                 "bbox_e", "bbox_n", "system:time_start_s1", "s1_tide_level_sat",
+                 "s2_tide_level_sat"])
+    # Everything missing a tide value for EITHER sensor, whatever its origin.
+    # Keying on s1 alone missed 887 chips whose s1 is stored but whose s2 is
+    # null in the source -- the two sensors' values are independently absent.
+    recovered = manifest[manifest["s1_tide_level_sat"].isna()
+                         | manifest["s2_tide_level_sat"].isna()].copy()
     by_origin = recovered["chip_origin"].value_counts().to_dict()
     unknown = set(by_origin) - set(MAX_MISSING)
     if unknown:

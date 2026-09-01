@@ -1,20 +1,33 @@
 #!/usr/bin/env python3
 """Resolve every gate into one column: ``passes_all_gates``.
 
-A chip qualifies for the v3 corpus only if it clears all three gates, which
-judge different things and are recorded separately as evidence:
+A chip is **dual-sensor**: its input is SAR and its label is optical. Each
+source must clear its own gates, and the chip is ready for model development
+only when both have.
 
-1. **QC verdict** -- the label. Round 1 rejected whole scenes; round 3 rejected
-   chips, corrected them with the B8<400 variant, or kept the original.
-2. **Invalid mask** -- coverage. The share of the chip the new mask calls
-   invalid must not exceed the threshold.
-3. **S1 integrity** -- the input. The chip's Sentinel-1 pixels must not have
-   been lost to the Earth Engine ``log10`` export defect.
+**Label side** (Sentinel-2 derived):
+
+1. **QC verdict** -- round 1 rejected whole scenes; round 3 rejected chips,
+   corrected them with the B8<400 variant, or kept the original.
+2. **Invalid mask** -- the share of the chip the new mask calls invalid must not
+   exceed the threshold.
+
+**Input side** (Sentinel-1):
+
+3. **S1 completeness** -- every pixel must carry an observation. A chip fails on
+   any zero, whether it is *fill* (0 in both bands, genuine absence at a
+   footprint edge) or *damage* (0 in one band, lost to the Earth Engine
+   ``log10`` export defect).
+
+Fill and damage differ in provenance, not in fitness: either way the model would
+read absence where it expects backscatter. The distinction is preserved in
+``s1_status`` because it matters for deciding whether to re-export, but it does
+not change whether a chip can be used.
 
 Gates 1 and 2 are already resolved into ``v3_status`` and the manifest holds
 only ``include`` chips, so in practice this column adds gate 3 and states the
-conjunction in one place. That matters: a consumer that filtered the manifest
-alone would silently pick up 871 chips whose VH is 88% missing.
+conjunction in one place. That matters: a consumer filtering the manifest alone
+would silently pick up chips with missing SAR input.
 
 ``passes_all_gates`` means **qualified**, not **cut**. 93,156 qualifying chips
 are rescued windows that were never chipped and have no array in any memmap yet.
@@ -22,10 +35,7 @@ That is a different property and it already has a column -- ``chip_origin`` --
 so the two are kept separate rather than collapsed into one flag that would be
 wrong for either the corpus builder or the model loader.
 
-Fill is not a disqualifier. A chip with fill pixels has genuine absence of S1
-observation at the footprint edge, which is real data about the world rather
-than a defect; those pixels are ``0`` in both bands and the loader can mask them.
-Only ``damaged_*`` chips fail, and only 871 do.
+1,652 chips fail the input gate: 871 ``damaged_vh`` and 781 ``fill``.
 """
 
 from __future__ import annotations
@@ -39,18 +49,17 @@ import pandas as pd
 import paths
 
 EXPECTED_CHIPS = 1_357_354
-# clean (1,355,702) + fill (781). Fill passes: see the module docstring.
-EXPECTED_PASSING = 1_356_483
-# Histograms were built over s1_status == 'clean' only, so the fill chips that
-# pass the gates have none yet. Surfaced rather than left to be discovered.
-EXPECTED_PASSING_WITHOUT_HISTOGRAM = 781
+# clean only. Fill and damage both fail the input gate; see the docstring.
+EXPECTED_PASSING = 1_355_702
+
 
 
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--include-fill", action="store_true",
-                        help="also fail chips that contain fill pixels; off by "
-                             "default because fill is real absence, not damage")
+    parser.add_argument("--allow-fill", action="store_true",
+                        help="let chips with fill pixels pass. Off by default: "
+                             "fill is missing SAR input, so the model would read "
+                             "absence where it expects backscatter")
     parser.add_argument("--write", action="store_true")
     args = parser.parse_args()
 
@@ -64,16 +73,18 @@ def main() -> int:
             raise AssertionError("%s missing; run the earlier stages first" % column)
 
     qc_ok = manifest["v3_status"] == "include"
-    s1_ok = ~manifest["s1_status"].str.startswith("damaged")
-    if args.include_fill:
-        s1_ok &= manifest["s1_status"] != "fill"
+    # The input gate: S1 must be complete. Fill and damage both mean a pixel
+    # with no observation, so both fail.
+    s1_ok = manifest["s1_status"] == "clean"
+    if args.allow_fill:
+        s1_ok |= manifest["s1_status"] == "fill"
     passes = qc_ok & s1_ok
 
     manifest["passes_all_gates"] = passes
 
     print("GATES over %d chips" % len(manifest))
-    print("  QC verdict + invalid mask (v3_status=include)  %9d" % int(qc_ok.sum()))
-    print("  S1 integrity (not damaged)                     %9d" % int(s1_ok.sum()))
+    print("  LABEL side  QC verdict + invalid mask          %9d" % int(qc_ok.sum()))
+    print("  INPUT side  S1 complete (no fill, no damage)   %9d" % int(s1_ok.sum()))
     print("  ---")
     print("  passes_all_gates                               %9d  (%.4f%%)"
           % (int(passes.sum()), 100 * float(passes.mean())))
@@ -93,17 +104,14 @@ def main() -> int:
     print("    label variant:    %s"
           % manifest.loc[passes, "v3_label_variant"].value_counts().to_dict())
 
-    # The histogram build covered clean chips only, so passing fill chips have
-    # no histogram. They are usable; they just need histogramming before any
-    # statistic is computed over the full passing set.
-    no_histogram = int((passes & (manifest["s1_status"] == "fill")).sum())
+    # Every passing chip is s1_status == 'clean', which is exactly the set
+    # build_histograms.py covered, so the histogram table and the passing set
+    # coincide by construction.
+    no_histogram = int((passes & (manifest["s1_status"] != "clean")).sum())
     if no_histogram:
-        print()
-        print("    NOTE %d passing chips have no S1 histogram yet (s1_status=fill;"
-              % no_histogram)
-        print("         build_histograms.py covered 'clean' only).")
+        raise AssertionError("%d passing chips have no S1 histogram" % no_histogram)
 
-    if not args.include_fill and int(passes.sum()) != EXPECTED_PASSING:
+    if not args.allow_fill and int(passes.sum()) != EXPECTED_PASSING:
         raise AssertionError("expected %d passing chips, got %d"
                              % (EXPECTED_PASSING, int(passes.sum())))
 

@@ -10,10 +10,14 @@ verification -- the duplication below is deliberate.
 Checks:
 
 1. **sizes** -- each file is exactly ``n * 3 * 224 * 224 * itemsize``.
-2. **round-trip identity** (sampled) -- invert the z-score on the destination
-   bands and compare, in dB, against a fresh cut of the same chip from the S1
-   raster. Tolerance 5e-3 dB-scale: the builder's own histogram check was
-   exact on integer codes, but this path round-trips through z-score and fp16.
+2. **round-trip identity** (sampled) -- z-score a fresh cut of the same chip
+   from the S1 raster and compare against the stored fp16 values, in z-score
+   space, against the fp16 rounding bound: |stored - fresh| must not exceed
+   ``2**-11 * max(|fresh|, 1)`` (half the fp16 spacing at the value's own
+   magnitude, with a 25% slack factor). The bound must scale with magnitude:
+   fp16 error is relative, and comparing in dB against a flat tolerance
+   mistakes ordinary quantization for corruption once multiplied by a ~9 dB
+   std (the first run of this verifier made exactly that mistake).
 3. **MATCH/DECOY** -- every sampled comparison is also run against a
    deliberately wrong chip (another chip of the same pair, or the next row)
    and must FAIL. A verifier whose decoys pass is comparing something to
@@ -55,7 +59,10 @@ EXPECTED_ASSIGNED = 1_322_788
 # Independent copies of the encoding facts (see the docstring on why).
 FLOOR_DB = -55.0
 STEP_DB = 0.05
-ROUNDTRIP_TOL_DB = 5e-3
+# fp16 half-spacing is 2**-11 relative to the value's magnitude; 1.25 is slack
+# for the float64 round-trip arithmetic. Applied as
+# tol = FP16_HALF_ULP_REL * max(|z|, 1), elementwise.
+FP16_HALF_ULP_REL = 1.25 * 2.0 ** -11
 
 
 def s1_raster(pair: str):
@@ -170,23 +177,27 @@ def main() -> int:
                         failures.append((split, int(row["row"]), pair,
                                          int(row["chip_id"]), "mask_counts"))
 
-                    # 2. round-trip in dB against a fresh, independent cut.
-                    recovered_db = stored[:2] * std + mean
-                    fresh_db = cut_db(src, tuple(boxes[k]))
-                    err = float(np.max(np.abs(recovered_db - fresh_db)))
-                    worst = max(worst, err)
+                    # 2. round-trip against a fresh, independent cut, compared
+                    # in z-score space against the magnitude-scaled fp16 bound.
+                    # norm_err <= 1 means "within fp16 rounding of the truth".
+                    fresh_z = (cut_db(src, tuple(boxes[k])) - mean) / std
+                    bound = FP16_HALF_ULP_REL * np.maximum(np.abs(fresh_z), 1.0)
+                    norm_err = float(np.max(np.abs(stored[:2] - fresh_z) / bound))
+                    worst = max(worst, norm_err)
                     match_n += 1
-                    if err > ROUNDTRIP_TOL_DB:
+                    if norm_err > 1.0:
                         failures.append((split, int(row["row"]), pair,
-                                         int(row["chip_id"]), "roundtrip %.2e" % err))
+                                         int(row["chip_id"]),
+                                         "roundtrip %.2f x fp16 bound" % norm_err))
 
                     # 3. decoy: the same stored bytes vs a WRONG chip's cut.
                     others = [j for j in range(len(group)) if j != k]
                     if others:
-                        wrong = cut_db(src, tuple(boxes[others[0]]))
-                        decoy_err = float(np.max(np.abs(recovered_db - wrong)))
+                        wrong_z = (cut_db(src, tuple(boxes[others[0]])) - mean) / std
+                        wbound = FP16_HALF_ULP_REL * np.maximum(np.abs(wrong_z), 1.0)
+                        decoy_err = float(np.max(np.abs(stored[:2] - wrong_z) / wbound))
                         decoy_n += 1
-                        if decoy_err <= ROUNDTRIP_TOL_DB:
+                        if decoy_err <= 1.0:
                             decoy_passed += 1
                             failures.append((split, int(row["row"]), pair,
                                              int(row["chip_id"]), "DECOY PASSED"))
@@ -195,8 +206,8 @@ def main() -> int:
                     band_sq += (stored[:2] ** 2).sum(axis=(1, 2))
                     band_px += CHIP_PIXELS
 
-        print("  round-trip max |err| %.2e dB (tol %.0e) over %s chips"
-              % (worst, ROUNDTRIP_TOL_DB, "{:,}".format(match_n)))
+        print("  round-trip max normalized err %.3f x fp16 bound (must be <= 1) "
+              "over %s chips" % (worst, "{:,}".format(match_n)))
         print("  MATCH %d / DECOY %d (passed decoys: %d -- must be 0)"
               % (match_n, decoy_n, decoy_passed))
         if mask_bad:
@@ -218,7 +229,8 @@ def main() -> int:
                     failures.append((split, -1, "%s_moments" % band, "", float(m_[i])))
 
         report["checks"][split] = {
-            "n_chips": n, "sampled": int(take), "roundtrip_max_err_db": worst,
+            "n_chips": n, "sampled": int(take),
+            "roundtrip_max_err_vs_fp16_bound": worst,
             "match": match_n, "decoy": decoy_n, "decoy_passed": decoy_passed,
             "zero_rows": zero_rows,
         }

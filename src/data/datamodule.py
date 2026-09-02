@@ -1,5 +1,6 @@
 import gc
 import os
+import json
 import random
 from typing import Optional
 
@@ -80,8 +81,35 @@ class CoastalDataModule:
         # the trial and accumulate across the sweep).
         self._loaders = []
 
+    def _check_dtype_against_build_manifest(self):
+        """Refuse a dtype that contradicts the memmap directory's build record.
+
+        File size alone cannot catch a wrong dtype: an fp16 array read as fp32
+        (or the reverse) is divisible by the sample size whenever N is even, so
+        the dataset would silently report half (or twice) the chips. The v3 and
+        mixed80 builders write ``build_manifest.json`` with a top-level
+        ``dtype`` beside the arrays; when that record exists it is authoritative.
+        Directories without one (the legacy lineages) are left to the size check.
+        """
+        manifest = os.path.join(self.root_dir, "build_manifest.json")
+        if not os.path.exists(manifest):
+            return
+        try:
+            with open(manifest) as f:
+                recorded = json.load(f).get("dtype")
+        except (OSError, ValueError):
+            return
+        if recorded is None:
+            return
+        if np.dtype(recorded) != self.dtype:
+            raise ValueError(
+                f"data.dtype={self.dtype.name!r} but {manifest} records dtype={recorded!r}; "
+                "set data.dtype to match the files (a mismatch would silently misreport N)."
+            )
+
     def setup(self):
         """Initializes dataset objects (but delays memmap opening per process)."""
+        self._check_dtype_against_build_manifest()
         aug = CoastalAug(**self.aug_params) if self.augment else None
         
         if os.path.exists(self.train_path):

@@ -18,7 +18,7 @@ def main(cfg: DictConfig):
     
     wandb.init(
         project=cfg.project_name,
-        group=f"gold_{cfg.model.arch}_{cfg.model.encoder_name}",
+        group=f"gold_{cfg.get('lineage', 'legacy')}_{cfg.model.arch}_{cfg.model.encoder_name}",
         name=f"run_s{cfg.seed}",
         job_type="train",
         config=OmegaConf.to_container(cfg, resolve=True)

@@ -1,0 +1,40 @@
+{
+  "dtype": "float16",
+  "channels": [
+    "vv_norm",
+    "vh_norm",
+    "label"
+  ],
+  "shape_per_chip": [
+    3,
+    224,
+    224
+  ],
+  "source_root": "/home/noel/memmaps_v3",
+  "indices": "subset_indices.npz",
+  "row_contract": "row j of {split}.memmap = source row {split}_idx[j] of the full v3 memmap (indices sorted ascending)",
+  "splits": {
+    "train": {
+      "n_chips": 92968,
+      "bytes": 27988574208,
+      "source_n_chips": 925123,
+      "verified_all_rows": true,
+      "mismatch_rows": 0,
+      "label_count_mismatches": 0,
+      "md5": "d2a6029b57a18e5687103ede8f4a1104",
+      "sha256": "9e1ae1c4b8a7777092ec7c0147e29475de1412b73d9286d456df195ac51c8512",
+      "built_at": "2026-09-02T09:36:07+00:00"
+    },
+    "val": {
+      "n_chips": 26685,
+      "bytes": 8033679360,
+      "source_n_chips": 265952,
+      "verified_all_rows": true,
+      "mismatch_rows": 0,
+      "label_count_mismatches": 0,
+      "md5": "a9b9a80b4273d76629814d5f8902c822",
+      "sha256": "b2ffe91ed4b2621807c17f830036bbc6fb319c31dc8a83f437674914621a76e9",
+      "built_at": "2026-09-02T09:38:37+00:00"
+    }
+  }
+}

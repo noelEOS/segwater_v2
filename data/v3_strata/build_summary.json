@@ -1,0 +1,92 @@
+{
+  "seed": 42,
+  "ratio": 0.1,
+  "t": 0.01,
+  "dtype": "float16",
+  "draw_rule": "per (pair, class): q = min(n, max(1, floor(ratio*n+0.5))), default_rng(seed), sorted group order",
+  "manifest": "dataset_v3_memmap_manifest.parquet",
+  "manifest_sha256": "44fff0ae9d28259b40c2a8415aca6b166db7666908a39b63fe0cf74c4e735016",
+  "built_at": "2026-09-02T09:30:37+00:00",
+  "train_10pct": {
+    "N": 92968,
+    "pairs": 2121,
+    "composition": {
+      "pure_land": 34523,
+      "mixed": 23374,
+      "pure_water": 35071,
+      "all_ignore": 0
+    },
+    "composition_share": {
+      "pure_land": 0.3713,
+      "mixed": 0.2514,
+      "pure_water": 0.3772,
+      "all_ignore": 0.0
+    }
+  },
+  "train_full": {
+    "N": 925123,
+    "pairs": 2121,
+    "composition": {
+      "pure_land": 343895,
+      "mixed": 232188,
+      "pure_water": 349040,
+      "all_ignore": 0
+    },
+    "composition_share": {
+      "pure_land": 0.3717,
+      "mixed": 0.251,
+      "pure_water": 0.3773,
+      "all_ignore": 0.0
+    }
+  },
+  "val_10pct": {
+    "N": 26685,
+    "pairs": 575,
+    "composition": {
+      "pure_land": 10064,
+      "mixed": 6651,
+      "pure_water": 9970,
+      "all_ignore": 0
+    },
+    "composition_share": {
+      "pure_land": 0.3771,
+      "mixed": 0.2492,
+      "pure_water": 0.3736,
+      "all_ignore": 0.0
+    }
+  },
+  "val_full": {
+    "N": 265952,
+    "pairs": 575,
+    "composition": {
+      "pure_land": 100369,
+      "mixed": 66103,
+      "pure_water": 99480,
+      "all_ignore": 0
+    },
+    "composition_share": {
+      "pure_land": 0.3774,
+      "mixed": 0.2486,
+      "pure_water": 0.3741,
+      "all_ignore": 0.0
+    }
+  },
+  "full_val": {
+    "N": 265952,
+    "P": 575,
+    "min_mixed": 20,
+    "eligible": 505,
+    "mixed_chips": 66103,
+    "mixed_per_pair_median": 80.0
+  },
+  "hpo_val": {
+    "N": 26685,
+    "P": 575,
+    "min_mixed": 5,
+    "eligible": 426,
+    "mixed_chips": 6651,
+    "eligible_pairs_mixed_share_of_full_val": 0.9529,
+    "contained_in_full_val_eligible": true,
+    "pearson_r_subset_vs_full_mixed_counts": 0.9997
+  }
+}

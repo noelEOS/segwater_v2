@@ -29,6 +29,7 @@ def main(cfg: DictConfig):
     datamodule = CoastalDataModule(
         root_dir=cfg.data.memmap_root,
         H=cfg.data.H, W=cfg.data.W,
+        dtype=cfg.data.get("dtype", "float32"),
         batch_size=cfg.data.batch_size,
         val_batch_size=cfg.data.val_batch_size,
         num_workers=cfg.data.num_workers,
@@ -36,7 +37,6 @@ def main(cfg: DictConfig):
         persistent_workers=cfg.data.get("persistent_workers", True),
         augment=cfg.data.augment,
         aug_params=cfg.data.get("aug", {}),
-        dtype=cfg.data.get("dtype", "float32"),
     )
     datamodule.setup()
     

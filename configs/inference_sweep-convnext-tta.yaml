@@ -18,6 +18,8 @@ sweep:
 
   # Overrides applied to every run in the sweep.
   common_overrides:
+    # Legacy lineage: rasters normalized as read, no re-quantization.
+    inference.data.s1_encoding: none
     inference.post_processing.smoothing.apply_simplification: true
     inference.post_processing.smoothing.simplify_tolerance_meters: 1.0
     inference.post_processing.filtering.apply_length_filter: true

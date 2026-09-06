@@ -14,6 +14,8 @@ sweep:
   input_glob: "S1B_*.tif"
 
   common_overrides:
+    # Legacy lineage: rasters normalized as read, no re-quantization.
+    inference.data.s1_encoding: none
     inference.output.root_dir: "outputs/inference"
     inference.post_processing.smoothing.apply_simplification: true
     inference.post_processing.smoothing.simplify_tolerance_meters: 1.0

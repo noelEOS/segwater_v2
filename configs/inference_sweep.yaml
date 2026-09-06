@@ -24,6 +24,8 @@ sweep:
 
   # Overrides applied to every run in the sweep.
   common_overrides:
+    # Legacy lineage: rasters normalized as read, no re-quantization.
+    inference.data.s1_encoding: none
     # Throughput settings, sized for 224px model inputs (native224 presets).
     # Inference holds no gradients/optimizer state, so batches far beyond the
     # training batch size fit in VRAM. For the 1024px large-tile presets, drop

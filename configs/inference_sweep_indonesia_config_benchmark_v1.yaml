@@ -31,6 +31,8 @@ sweep:
   # Benchmark evaluation consumes probability GeoTIFFs, so keep those enabled.
   # Shoreline/vector products are not needed for the raster benchmark.
   common_overrides:
+    # Legacy lineage: rasters normalized as read, no re-quantization.
+    inference.data.s1_encoding: none
     inference.output.root_dir: "outputs/inference/config_benchmark_runs"
     inference.output.save_probability_geotiff: true
     inference.output.save_binary_mask_geotiff: false

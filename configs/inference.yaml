@@ -63,18 +63,38 @@ inference:
 
     fill_value: 0.0          # Fallback scalar NoData padding for edge tiles.
     precision: "float32"     # Options: "float32" or "float16"
+    # REQUIRED, no default. Which S1 encoding the checkpoint was trained on:
+    #   q55s005 -- dB = code * 0.05 - 55, code 0 = nodata (dataset_v3 and later).
+    #              Continuous-dB inputs are re-quantized onto that lattice, with
+    #              the export's code-1 floor, before normalization.
+    #   none    -- inputs used as read (legacy lineages).
+    # A checkpoint records no lineage, so this must be stated per config; `???`
+    # makes Hydra fail on a config that omits it rather than pick one silently.
+    s1_encoding: ???
+
+    # ⚠️ These constants and s1_encoding are ONE unit: the moments were computed
+    # over the encoding named above. Changing either alone mis-normalizes
+    # silently -- run_inference records whatever is here into every scene's
+    # metadata.json without validating it against the checkpoint.
+    # dataset_v3 (derive_norm_constants.py, docs/dataset_v3/NORM_CONSTANTS_V3.md).
     normalization:
       enabled: true
       method: "standardize_db"
-      means: [-15.510920639155525, -23.57375764750785]
-      stds: [6.564080466988128, 7.6567358472184]
+      means: [-15.435106, -24.856323]
+      stds: [6.517790, 9.117346]
     padding:
       # Recommended for raw dB inputs: pad out-of-bounds edge context with
       # the training-set channel means so the normalized padding becomes 0.
+      # ⚠️ Second copy of the means -- must move with them or padding stops
+      # normalizing to zero.
+      # Under s1_encoding: q55s005 the padding is re-quantized like any other
+      # pixel, so it normalizes to within half a step of zero (|z| <= 0.004)
+      # rather than exactly zero. Deliberate: exempting it would make the
+      # transform depend on a pixel's provenance.
       mode: "training_channel_mean"
       channel_fill_values:
-        - -15.510920639155525
-        - -23.57375764750785
+        - -15.435106
+        - -24.856323
 
   # --- Probability Map Stitching ---
   stitching:

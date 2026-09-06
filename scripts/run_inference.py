@@ -34,12 +34,63 @@ from src.utils.vectorizer import ShorelineVectorizer
 logger = logging.getLogger(__name__)
 
 
+def build_s1_encoding(cfg):
+    """Return a dB->dB re-quantizer matching the training export, or None.
+
+    ``inference.data.s1_encoding`` is REQUIRED and has no default: the training
+    corpus and the evaluation rasters are produced by different pipelines, and a
+    checkpoint carries no record of which one it was trained on. A missing key is
+    an error rather than a silent lineage guess -- the normalization constants
+    already drifted once that way.
+
+    ``none``      -- inputs are used as read (legacy lineages, whose corpora were
+                     normalized straight from continuous dB).
+    ``q55s005``   -- inputs are re-quantized onto the training lattice first.
+
+    The v3 corpus was exported from linear power by the GEE ``quantize_db`` op
+    (gee-search-agent ``export/products.py``) as::
+
+        code = clamp(round((10*log10(linear) + offset_db) / step_db), 1, 65535)
+
+    so the served values live on a ``step_db`` lattice with code 1 as a hard
+    floor and code 0 reserved for nodata. The v3 mean/std describe *that*
+    distribution, including the pixels the clamp piles onto the floor. Evaluation
+    rasters are continuous dB and reach below it (VH observed to -63.5 dB), so
+    they must cross the same lattice before the z-score or the model sees values
+    it was never trained on. We enter the chain after the export's ``10*log10``,
+    the inputs already being dB.
+
+    The upper clamp is 65535 (+3221.75 dB at these constants) and so is
+    unreachable: bright pixels pass through, exactly as they do in the corpus.
+    """
+    enc = cfg.inference.data.s1_encoding
+
+    if enc == "none":
+        return None
+
+    if enc != "q55s005":
+        raise ValueError(
+            f"Unknown inference.data.s1_encoding {enc!r}. Expected 'q55s005' "
+            "(re-quantize onto the training lattice) or 'none' (use inputs as read)."
+        )
+
+    offset_db = np.float32(55.0)
+    step_db = np.float32(0.05)
+
+    def requantize(data: np.ndarray) -> np.ndarray:
+        code = np.clip(np.round((data + offset_db) / step_db), 1, 65535)
+        return code * step_db - offset_db
+
+    return requantize
+
+
 def build_inference_transform(cfg):
     if not cfg.inference.data.normalization.enabled:
         return None
 
     means = np.array(cfg.inference.data.normalization.means, dtype=np.float32)
     stds = np.array(cfg.inference.data.normalization.stds, dtype=np.float32)
+    requantize = build_s1_encoding(cfg)
 
     def transform(data: np.ndarray) -> np.ndarray:
         data = data.astype(np.float32, copy=False)
@@ -49,6 +100,10 @@ def build_inference_transform(cfg):
                 f"Expected {len(means)} channels for normalization, "
                 f"but got {data.shape[0]} channels."
             )
+
+        # Re-quantize before the z-score: the constants describe the lattice.
+        if requantize is not None:
+            data = requantize(data)
 
         return (data - means[:, None, None]) / stds[:, None, None]
 

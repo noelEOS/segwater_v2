@@ -1,8 +1,9 @@
 #!/usr/bin/env python3
 """Generate the dataset_v3 lineage's inference sweep configs.
 
-Six sites: Demak (concurrent gate), Hampyeong (24-scene bay) and the four SDS
-frames (Narrabeen, Duck, Torrey Pines, Trucvert).
+Seven sites: Demak (6-scene concurrent gate), Demak full series (213 scenes),
+Hampyeong (24-scene bay) and the four SDS frames (Narrabeen, Duck, Torrey
+Pines, Trucvert).
 
 The v3 stage-2 runs differ from every earlier lineage in four ways that all have
 to be stated in the config, because nothing downstream can infer them:
@@ -74,6 +75,8 @@ V3_MEANS = [-15.435106, -24.856323]
 V3_STDS = [6.517790, 9.117346]
 
 SITES = {
+    # The 6-scene concurrent gate: S1 scenes paired with same-window S2, scored
+    # against the S2 vote-and-veto reference. This is the accuracy gate.
     "demak": {
         "subdir": "demak",
         "input_dir": "/home/noel/data_demak_concurrent",
@@ -98,6 +101,28 @@ SITES = {
             "inference.post_processing.filtering.apply_length_filter": False,
             "inference.post_processing.filtering.min_length_meters": 10000.0,
             "inference.post_processing.filtering.keep_top_k": 5,
+        },
+    },
+    # The 213-scene full time series (2017-03-16 .. 2025-04-03, frame 76_8_9,
+    # one scene per date). Feeds the shoreline-change/trend analysis rather than
+    # the accuracy gate -- there is no concurrent S2 reference for these dates.
+    #
+    # Same post-processing as the concurrent gate, deliberately: the two products
+    # must be the same measurement at different sampling, or a trend built from
+    # the series cannot be read against the gate's accuracy.
+    #
+    # ⚠️ 213 scenes x 2175x2160 px per arm -- by far the largest run here.
+    # ⚠️ The old lineage's config pointed at ~/data_demak_full_series; on this VM
+    # the series lives at ~/data_demak (what check_inputs' demak_full gate
+    # resolves by default, and what SEGWATER_DEMAK_FULL_DATA overrides).
+    "demak_full": {
+        "subdir": "demak",
+        "input_dir": "/home/noel/data_demak",
+        "input_glob": "S1_*.tif",
+        "name": "v3_demak_full",
+        "post": {
+            "inference.post_processing.filtering.apply_length_filter": True,
+            "inference.post_processing.filtering.min_length_meters": 10000.0,
         },
     },
     # --- SDS sites (satellite-derived shoreline) ---

@@ -1,5 +1,8 @@
 #!/usr/bin/env python3
-"""Generate the dataset_v3 lineage's inference sweep configs (Demak + Hampyeong).
+"""Generate the dataset_v3 lineage's inference sweep configs.
+
+Six sites: Demak (concurrent gate), Hampyeong (24-scene bay) and the four SDS
+frames (Narrabeen, Duck, Torrey Pines, Trucvert).
 
 The v3 stage-2 runs differ from every earlier lineage in four ways that all have
 to be stated in the config, because nothing downstream can infer them:
@@ -96,6 +99,41 @@ SITES = {
             "inference.post_processing.filtering.min_length_meters": 10000.0,
             "inference.post_processing.filtering.keep_top_k": 5,
         },
+    },
+    # --- SDS sites (satellite-derived shoreline) ---
+    #
+    # No length filter and no keep_top_k: SDS extracts a waterline per scene and
+    # scores it against in-situ transects itself, so a shoreline post-filter here
+    # would discard the very geometry the benchmark measures. This matches the
+    # pair-based SDS configs, which set apply_length_filter false and nothing else.
+    #
+    # Stride stays s32 via the shared preset -- the operational stride (the
+    # manuscript reports s32 throughout; s8 is the Supplementary S11
+    # compute-for-precision option, not a different default).
+    #
+    # ⚠️ input_dir is the STAGED dir. Scenes whose acquisition date falls outside
+    # the site's in-situ groundtruth window (padded by max_days at both ends) are
+    # parked in a sibling *_no_groundtruth/. SDS silently ignores scenes it cannot
+    # pair, so a mis-staged dir yields a plausible result on the wrong sample.
+    # Staging is computed from the groundtruth dates (~/stage_sds_splits.py) and
+    # verified by scripts/evaluation/vm/sds_scene_check.py -- never a date cutoff.
+    **{
+        key: {
+            "subdir": "sds",
+            "input_dir": f"/home/noel/Inference_input/{src}",
+            "input_glob": "*.tif",
+            "name": f"v3_sds_{key}",
+            "post": {
+                "inference.post_processing.filtering.apply_length_filter": False,
+                "inference.post_processing.filtering.min_length_meters": 10000.0,
+            },
+        }
+        for key, src in [
+            ("narrabeen", "NARRABEEN_ron_147_ts_9_sn_16"),
+            ("duck", "Duck_ron_4_ts_24_sn_19"),
+            ("torreypines", "Torreypines_ron_71"),
+            ("trucvert", "TRUCVERT_ron_8_ts_30_sn_20"),
+        ]
     },
 }
 

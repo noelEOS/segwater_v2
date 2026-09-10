@@ -37,10 +37,30 @@ properties gen_rest4_configs.py was deprecated for lacking: emission from a
 single parsed template (not string concatenation), a prefix-collision check on
 the emitted sweep names, and an atomic write.
 
+Seven architectures, not two. Swin-B and ConvNeXtV2-B were evaluated on GCP;
+the other five (UNet, UNet++, DeepLabV3+, SegFormer, DPT) finished stage-2 on
+2026-09-08/09 and have never been evaluated. ``--archs new5`` emits only those.
+
+⚠️ **The decoder arch is per-architecture.** Only the Swin and ConvNeXt arms are
+UPerNet. The ``model.arch`` token in each emitted config must match
+``SegmentationModelFactory.build`` (src/models/factory.py) or the state_dict will
+not load. Every arch/encoder pair in ``ARCHS`` is read from the driver that
+trained that arm -- ``campaign_drivers/v3/run_stage2_arch.sh`` and
+``run_stage2_unet.sh`` -- because the checkpoints carry no architecture metadata
+(only step/model_state_dict/optimizer_state_dict/val_miou). The run directory
+name plus those drivers are the entire record.
+
+Two host layouts, since the campaign moved from a GCP VM to a RunPod box:
+``--host gcp`` (default, ``/home/noel/...`` + repo-relative checkpoints)
+reproduces the original campaign; ``--host runpod`` emits ``/workspace/...``.
+
 Usage::
 
     python scripts/evaluation/vm/gen_v3_configs.py --check   # diff, write nothing
     python scripts/evaluation/vm/gen_v3_configs.py           # write the configs
+
+    # the five new architectures, for the RunPod box
+    python scripts/evaluation/vm/gen_v3_configs.py --host runpod --archs new5
 """
 
 from __future__ import annotations
@@ -59,14 +79,72 @@ from naming import atomic_write_text, require_no_prefix_collisions  # noqa: E402
 REPO = HERE.parents[2]
 CONFIG_ROOT = HERE / "configs"
 
+# --- Host layout -------------------------------------------------------------
+# The GCP eval VM and the RunPod box disagree on where data and checkpoints live,
+# so neither is baked in. Defaults reproduce the GCP campaign byte-for-byte; the
+# RunPod layout is selected with --host runpod (see HOSTS).
+#
+#   data_root   : parent of data_demak/, data_demak_concurrent/, Inference_input/
+#   ckpt_root   : filesystem dir holding <arch>/<run>/*_last.pth (for discovery)
+#   ckpt_prefix : how that same dir is SPELLED inside the config, which
+#                 run_inference resolves relative to the repo root on GCP but
+#                 needs absolute on the pod
+HOSTS = {
+    "gcp": {
+        "data_root": "/home/noel",
+        "ckpt_root": REPO / "outputs" / "stage2_v3",
+        "ckpt_prefix": "outputs/stage2_v3",
+        # Spelled exactly as the completed 2026-09-06/08 campaign ran it. Do not
+        # "fix" this to match the pod: these configs are that campaign's record.
+        "hamp24_dir": "/home/noel/hampyeong_ron_134_ts_16_sn_15_all24",
+    },
+    "runpod": {
+        "data_root": "/workspace/inputs",
+        "ckpt_root": Path("/workspace/ckpts"),
+        "ckpt_prefix": "/workspace/ckpts",
+        # The 24 GEE re-downloads (3810x3131), uploaded 2026-09-10 and verified
+        # byte-identical to the Mac. NOT the pack's 6-scene
+        # Inference_input/hampyeong_ron_134_ts_16_sn_15.
+        "hamp24_dir": "/workspace/inputs/Inference_input/hampyeong_gee_frame_scenes_24",
+    },
+}
+
+DATA_ROOT = HOSTS["gcp"]["data_root"]
+CKPT_ROOT = HOSTS["gcp"]["ckpt_root"]
+CKPT_PREFIX = HOSTS["gcp"]["ckpt_prefix"]
+HAMP24_DIR = HOSTS["gcp"]["hamp24_dir"]
+
 SEEDS = ["s19", "s42", "s58"]
 
-# arch dir token -> (encoder_name, short slug for the sweep name). The run dir
-# under outputs/stage2_v3/<arch>/ is discovered, never hardcoded: it carries a
-# wall-clock stamp that is not derivable from the seed.
+# arch dir token -> (decoder arch, encoder_name, short slug for the sweep name).
+# The run dir under outputs/stage2_v3/<arch>/ is discovered, never hardcoded: it
+# carries a wall-clock stamp that is not derivable from the seed.
+#
+# ⚠️ The decoder arch is NOT "upernet" for all seven. Only the two ViT/ConvNeXt
+# encoders use UPerNet; the other five are their own decoders, and the token
+# must match SegmentationModelFactory.build (src/models/factory.py) exactly or
+# the state_dict will not load.
+#
+# Every triple below is read from the driver that actually trained the arm --
+# campaign_drivers/v3/run_stage2_arch.sh (segformer/unetpp/dpt/deeplab) and
+# run_stage2_unet.sh (unet). The checkpoints themselves carry no architecture
+# metadata (only step/model_state_dict/optimizer_state_dict/val_miou), so the
+# directory name plus these drivers are the sole record.
 ARCHS = {
-    "upernet_tu-swin_base_patch4_window7_224": ("tu-swin_base_patch4_window7_224", "swinb"),
-    "upernet_tu-convnextv2_base": ("tu-convnextv2_base", "cnxb"),
+    "upernet_tu-swin_base_patch4_window7_224": (
+        "upernet", "tu-swin_base_patch4_window7_224", "swinb"),
+    "upernet_tu-convnextv2_base": (
+        "upernet", "tu-convnextv2_base", "cnxb"),
+    "unet_resnet50": (
+        "unet", "resnet50", "unet"),
+    "unetplusplus_resnet50": (
+        "unetplusplus", "resnet50", "unetpp"),
+    "deeplabv3plus_resnet50": (
+        "deeplabv3plus", "resnet50", "deeplab"),
+    "segformer_mit_b4": (
+        "segformer", "mit_b4", "segformer"),
+    "dpt_tu-vit_base_patch16_224.mae": (
+        "dpt", "tu-vit_base_patch16_224.mae", "dpt"),
 }
 
 # The v3 constants, asserted against configs/inference.yaml so a config can
@@ -79,7 +157,7 @@ SITES = {
     # against the S2 vote-and-veto reference. This is the accuracy gate.
     "demak": {
         "subdir": "demak",
-        "input_dir": "/home/noel/data_demak_concurrent",
+        "input_dir": "{data_root}/data_demak_concurrent",
         "input_glob": "S1_*.tif",
         "name": "v3_demak_concurrent",
         # Demak keeps the length filter: the gate scores a coastline, and short
@@ -92,7 +170,7 @@ SITES = {
     },
     "hampyeong": {
         "subdir": "hampyeong",
-        "input_dir": "/home/noel/hampyeong_ron_134_ts_16_sn_15_all24",
+        "input_dir": "{hamp24_dir}",
         "input_glob": "S1B_*.tif",
         "name": "v3_hamp24",
         # Hampyeong keeps keep_top_k and NO length filter: the bay's waterline
@@ -117,7 +195,7 @@ SITES = {
     # resolves by default, and what SEGWATER_DEMAK_FULL_DATA overrides).
     "demak_full": {
         "subdir": "demak",
-        "input_dir": "/home/noel/data_demak",
+        "input_dir": "{data_root}/data_demak",
         "input_glob": "S1_*.tif",
         "name": "v3_demak_full",
         "post": {
@@ -145,7 +223,7 @@ SITES = {
     **{
         key: {
             "subdir": "sds",
-            "input_dir": f"/home/noel/Inference_input/{src}",
+            "input_dir": f"{{data_root}}/Inference_input/{src}",
             "input_glob": "*.tif",
             "name": f"v3_sds_{key}",
             "post": {
@@ -163,20 +241,115 @@ SITES = {
 }
 
 
+# Stage-2 run directory stamps, read off the checkpoint tree on 2026-09-10
+# (`rclone check` verified against gdrive:segwater_v2_dataset_v3_results/stage2_v3/,
+# 21/21 matching). Wall-clock stamps cannot be derived from the seed, so this is
+# the record used when generating on a host without the checkpoints. When the tree
+# IS present it is discovered instead and this table is not consulted.
+RUN_DIRS = {
+    "deeplabv3plus_resnet50": {
+        "s19": "16-30-22_s19",
+        "s42": "13-37-44_s42",
+        "s58": "19-15-06_s58",
+    },
+    "dpt_tu-vit_base_patch16_224.mae": {
+        "s19": "21-12-20_s19",
+        "s42": "15-57-04_s42",
+        "s58": "02-23-11_s58",
+    },
+    "segformer_mit_b4": {
+        "s19": "02-34-58_s19",
+        "s42": "21-59-42_s42",
+        "s58": "07-01-33_s58",
+    },
+    "unet_resnet50": {
+        "s19": "09-32-39_s19",
+        "s42": "06-33-13_s42",
+        "s58": "12-32-14_s58",
+    },
+    "unetplusplus_resnet50": {
+        "s19": "22-27-55_s19",
+        "s42": "15-33-00_s42",
+        "s58": "05-20-17_s58",
+    },
+    "upernet_tu-convnextv2_base": {
+        "s19": "01-34-44_s19",
+        "s42": "18-50-35_s42",
+        "s58": "06-37-19_s58",
+    },
+    "upernet_tu-swin_base_patch4_window7_224": {
+        "s19": "09-00-42_s19",
+        "s42": "04-01-53_s42",
+        "s58": "13-54-57_s58",
+    },
+}
+
+
+# The five architectures trained 2026-09-08/09 that have never been evaluated.
+# Swin-B and ConvNeXtV2-B were evaluated on GCP and are excluded by this token.
+NEW5 = [
+    "unet_resnet50",
+    "unetplusplus_resnet50",
+    "deeplabv3plus_resnet50",
+    "segformer_mit_b4",
+    "dpt_tu-vit_base_patch16_224.mae",
+]
+
+
+def select_archs(spec: str) -> list[str]:
+    """Resolve --archs to arch dir tokens, accepting slugs as an alias.
+
+    Raises on an unknown name rather than silently emitting a smaller campaign:
+    a typo here means missing arms nobody notices until the ranking table is
+    short a row.
+    """
+    if spec == "all":
+        return list(ARCHS)
+    if spec == "new5":
+        return list(NEW5)
+    by_slug = {slug: token for token, (_, _, slug) in ARCHS.items()}
+    out = []
+    for raw in spec.split(","):
+        name = raw.strip()
+        if name in ARCHS:
+            out.append(name)
+        elif name in by_slug:
+            out.append(by_slug[name])
+        else:
+            raise SystemExit(
+                f"unknown arch {name!r}; choose from dir tokens {sorted(ARCHS)} "
+                f"or slugs {sorted(by_slug)}, or 'all'/'new5'"
+            )
+    return out
+
+
 def find_run_dir(arch: str, seed: str) -> str:
     """The single stage-2 run dir for one arch/seed, by its ``_s<seed>`` suffix.
 
-    Raises rather than picking when the directory is absent or ambiguous: a
+    Raises rather than picking when the directory is present but ambiguous: a
     wrong checkpoint here mis-scores the whole campaign silently.
+
+    When the checkpoint tree is absent -- generating on the Mac, where no
+    checkpoints live -- falls back to RUN_DIRS, the recorded stamps. That is a
+    lookup of a known answer, not a guess: the stamp is wall-clock and cannot be
+    derived, so an unrecorded arch/seed is an error, never an invention.
     """
-    root = REPO / "outputs" / "stage2_v3" / arch
-    hits = sorted(p for p in root.glob(f"*_{seed}") if p.is_dir()) if root.is_dir() else []
-    if len(hits) != 1:
+    root = CKPT_ROOT / arch
+    if root.is_dir():
+        hits = sorted(p for p in root.glob(f"*_{seed}") if p.is_dir())
+        if len(hits) != 1:
+            raise SystemExit(
+                f"expected exactly one run dir for {arch}/{seed} under {root}, found {len(hits)}"
+                + (f": {[h.name for h in hits]}" if hits else "")
+            )
+        return hits[0].name
+    try:
+        return RUN_DIRS[arch][seed]
+    except KeyError:
         raise SystemExit(
-            f"expected exactly one run dir for {arch}/{seed} under {root}, found {len(hits)}"
-            + (f": {[h.name for h in hits]}" if hits else "")
-        )
-    return hits[0].name
+            f"{root} does not exist and no run dir is recorded for {arch}/{seed}; "
+            f"generate on a host that has the checkpoints, or add the stamp to RUN_DIRS"
+        ) from None
 
 
 def checkpoint_path(arch: str, seed: str, run: str) -> str:
@@ -186,8 +359,8 @@ def checkpoint_path(arch: str, seed: str, run: str) -> str:
     spells a checkpoint. Existence is checked when generating on the VM; the
     Mac has no checkpoints, so absence there is not an error.
     """
-    rel = f"outputs/stage2_v3/{arch}/{run}"
-    local = REPO / rel
+    rel = f"{CKPT_PREFIX}/{arch}/{run}"
+    local = CKPT_ROOT / arch / run
     if local.is_dir():
         lasts = sorted(local.glob("*_last.pth"))
         if len(lasts) != 1:
@@ -199,7 +372,7 @@ def checkpoint_path(arch: str, seed: str, run: str) -> str:
 
 def build_config(site_key: str, arch: str, seed: str) -> tuple[str, dict]:
     site = SITES[site_key]
-    encoder, slug = ARCHS[arch]
+    decoder, encoder, slug = ARCHS[arch]
     run = find_run_dir(arch, seed)
     sweep_name = f"{site['name']}_{slug}_{seed}"
 
@@ -227,14 +400,15 @@ def build_config(site_key: str, arch: str, seed: str) -> tuple[str, dict]:
             "name": sweep_name,
             "dry_run": False,
             "continue_on_error": True,
-            "input_dir": site["input_dir"],
+            "input_dir": site["input_dir"].format(
+                data_root=DATA_ROOT, hamp24_dir=HAMP24_DIR),
             "input_glob": site["input_glob"],
             "common_overrides": overrides,
             "checkpoints": [
                 {
                     "name": f"{arch}_{seed}",
                     "checkpoint_path": checkpoint_path(arch, seed, run),
-                    "model": {"arch": "upernet", "encoder_name": encoder},
+                    "model": {"arch": decoder, "encoder_name": encoder},
                 }
             ],
             "presets": [
@@ -282,13 +456,27 @@ def assert_base_config_is_v3() -> None:
 def main() -> None:
     ap = argparse.ArgumentParser(description=__doc__)
     ap.add_argument("--check", action="store_true", help="report what would change; write nothing")
+    ap.add_argument("--host", choices=sorted(HOSTS), default="gcp",
+                    help="filesystem layout to emit paths for (default: gcp)")
+    ap.add_argument("--archs", default="all",
+                    help="comma-separated arch dir tokens or slugs, or 'all' (default), "
+                         "or 'new5' for the five never-evaluated architectures")
     args = ap.parse_args()
+
+    global DATA_ROOT, CKPT_ROOT, CKPT_PREFIX, HAMP24_DIR
+    host = HOSTS[args.host]
+    DATA_ROOT = host["data_root"]
+    CKPT_ROOT = host["ckpt_root"]
+    CKPT_PREFIX = host["ckpt_prefix"]
+    HAMP24_DIR = host["hamp24_dir"]
+
+    selected = select_archs(args.archs)
 
     assert_base_config_is_v3()
 
     emitted: dict[str, tuple[Path, str]] = {}
     for site_key, site in SITES.items():
-        for arch in ARCHS:
+        for arch in selected:
             for seed in SEEDS:
                 name, doc = build_config(site_key, arch, seed)
                 text = HEADER.format(site=site_key, arch=arch, seed=seed) + yaml.safe_dump(
@@ -321,7 +509,8 @@ def main() -> None:
             atomic_write_text(out, text)
 
     print(f"\n{len(emitted)} configs {'checked' if args.check else 'written'}"
-          f" ({len(SITES)} sites x {len(ARCHS)} archs x {len(SEEDS)} seeds)")
+          f" ({len(SITES)} sites x {len(selected)} archs x {len(SEEDS)} seeds)"
+          f"  host={args.host}  data_root={DATA_ROOT}  ckpt_prefix={CKPT_PREFIX}")
 
 
 if __name__ == "__main__":

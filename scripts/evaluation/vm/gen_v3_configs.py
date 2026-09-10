@@ -114,6 +114,12 @@ CKPT_ROOT = HOSTS["gcp"]["ckpt_root"]
 CKPT_PREFIX = HOSTS["gcp"]["ckpt_prefix"]
 HAMP24_DIR = HOSTS["gcp"]["hamp24_dir"]
 
+# Tiling stride. 32 = operational (tile 224 -> 7x overlap per axis); the
+# manuscript reports s32 throughout and s8 is the Supplementary S11
+# compute-for-precision option. A coarser stride trades stitching quality for
+# speed: 112 gives 2x overlap and ~12x fewer tiles per scene.
+STRIDE = 32
+
 SEEDS = ["s19", "s42", "s58"]
 
 # arch dir token -> (decoder arch, encoder_name, short slug for the sweep name).
@@ -296,6 +302,32 @@ NEW5 = [
 ]
 
 
+SDS_SITES = ["narrabeen", "duck", "torreypines", "trucvert"]
+
+
+def select_sites(spec: str) -> list[str]:
+    """Resolve --sites to site keys. 'sds' expands to the four SDS frames.
+
+    Raises on an unknown key rather than silently emitting a smaller campaign.
+    """
+    if spec == "all":
+        return list(SITES)
+    out = []
+    for raw in spec.split(","):
+        name = raw.strip()
+        if name == "sds":
+            out.extend(SDS_SITES)
+        elif name in SITES:
+            out.append(name)
+        else:
+            raise SystemExit(
+                f"unknown site {name!r}; choose from {sorted(SITES)}, "
+                f"or 'sds' for the four frames, or 'all'"
+            )
+    seen = set()
+    return [s for s in out if not (s in seen or seen.add(s))]
+
+
 def select_archs(spec: str) -> list[str]:
     """Resolve --archs to arch dir tokens, accepting slugs as an alias.
 
@@ -374,7 +406,16 @@ def build_config(site_key: str, arch: str, seed: str) -> tuple[str, dict]:
     site = SITES[site_key]
     decoder, encoder, slug = ARCHS[arch]
     run = find_run_dir(arch, seed)
-    sweep_name = f"{site['name']}_{slug}_{seed}"
+    # Stride 32 is the operational default and its sweep names are unsuffixed --
+    # 42 tracked configs and every scored v3 result depend on that spelling.
+    #
+    # A non-default stride is tagged BEFORE the seed, not after. A trailing tag
+    # makes the operational name a strict prefix of the variant
+    # ("..._s19" prefixes "..._s19_stride112"), and run dirs are selected by
+    # glob: `*_s19_*` would then match both strides and silently pool them.
+    # require_no_prefix_collisions() rejects that shape, by design.
+    stride_tag = "" if STRIDE == 32 else f"_stride{STRIDE}"
+    sweep_name = f"{site['name']}_{slug}{stride_tag}_{seed}"
 
     overrides = {
         # Lineage. Mandatory key -- see build_s1_encoding in run_inference.py.
@@ -413,11 +454,11 @@ def build_config(site_key: str, arch: str, seed: str) -> tuple[str, dict]:
             ],
             "presets": [
                 {
-                    "name": "native224_weighted_224_b0_s32",
+                    "name": f"native224_weighted_224_b0_s{STRIDE}",
                     "overrides": {
                         "inference.data.tile_size": 224,
                         "inference.data.buffer_size": 0,
-                        "inference.data.stride": 32,
+                        "inference.data.stride": STRIDE,
                         "inference.stitching.mode": "weighted_blend",
                         "inference.stitching.blend_window": "hann",
                     },
@@ -458,12 +499,22 @@ def main() -> None:
     ap.add_argument("--check", action="store_true", help="report what would change; write nothing")
     ap.add_argument("--host", choices=sorted(HOSTS), default="gcp",
                     help="filesystem layout to emit paths for (default: gcp)")
+    ap.add_argument("--stride", type=int, default=32,
+                    help="tiling stride (default 32, the operational value). A "
+                         "non-32 stride suffixes every sweep name with _stride<N> "
+                         "so it cannot collide with the operational configs.")
+    ap.add_argument("--sites", default="all",
+                    help="comma-separated site keys, or 'all' (default). "
+                         "e.g. hampyeong,demak,sds  ('sds' expands to the 4 frames)")
     ap.add_argument("--archs", default="all",
                     help="comma-separated arch dir tokens or slugs, or 'all' (default), "
                          "or 'new5' for the five never-evaluated architectures")
     args = ap.parse_args()
 
-    global DATA_ROOT, CKPT_ROOT, CKPT_PREFIX, HAMP24_DIR
+    global DATA_ROOT, CKPT_ROOT, CKPT_PREFIX, HAMP24_DIR, STRIDE
+    STRIDE = args.stride
+    if STRIDE < 1 or STRIDE > 224:
+        raise SystemExit(f"--stride {STRIDE} outside 1..224 (tile_size is 224)")
     host = HOSTS[args.host]
     DATA_ROOT = host["data_root"]
     CKPT_ROOT = host["ckpt_root"]
@@ -471,11 +522,13 @@ def main() -> None:
     HAMP24_DIR = host["hamp24_dir"]
 
     selected = select_archs(args.archs)
+    selected_sites = select_sites(args.sites)
 
     assert_base_config_is_v3()
 
     emitted: dict[str, tuple[Path, str]] = {}
-    for site_key, site in SITES.items():
+    for site_key in selected_sites:
+        site = SITES[site_key]
         for arch in selected:
             for seed in SEEDS:
                 name, doc = build_config(site_key, arch, seed)
@@ -509,7 +562,8 @@ def main() -> None:
             atomic_write_text(out, text)
 
     print(f"\n{len(emitted)} configs {'checked' if args.check else 'written'}"
-          f" ({len(SITES)} sites x {len(selected)} archs x {len(SEEDS)} seeds)"
+          f" ({len(selected_sites)} sites x {len(selected)} archs x {len(SEEDS)} seeds)"
+          f"  stride={STRIDE}"
           f"  host={args.host}  data_root={DATA_ROOT}  ckpt_prefix={CKPT_PREFIX}")
 
 

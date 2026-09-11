@@ -61,6 +61,10 @@ Usage::
 
     # the five new architectures, for the RunPod box
     python scripts/evaluation/vm/gen_v3_configs.py --host runpod --archs new5
+
+    # Isolated dense-stride performance experiment; default configs unchanged.
+    python scripts/evaluation/vm/gen_v3_configs.py --host runpod --sites demak \\
+        --archs unet --stride 8 --cache-scene --batch-accumulation
 """
 
 from __future__ import annotations
@@ -98,6 +102,15 @@ HOSTS = {
         # "fix" this to match the pod: these configs are that campaign's record.
         "hamp24_dir": "/home/noel/hampyeong_ron_134_ts_16_sn_15_all24",
     },
+    # The 2026-09-11 stride-8 fleet: four spot VMs across four GCP projects,
+    # staged by rclone into ~/inputs and ~/ckpts rather than the 2026-09 eval
+    # VM's flat ~/ layout. Same $HOME, different tree.
+    "gcp_fleet": {
+        "data_root": "/home/noel/inputs",
+        "ckpt_root": Path("/home/noel/ckpts"),
+        "ckpt_prefix": "/home/noel/ckpts",
+        "hamp24_dir": "/home/noel/inputs/Inference_input/hampyeong_gee_frame_scenes_24",
+    },
     "runpod": {
         "data_root": "/workspace/inputs",
         "ckpt_root": Path("/workspace/ckpts"),
@@ -119,6 +132,8 @@ HAMP24_DIR = HOSTS["gcp"]["hamp24_dir"]
 # compute-for-precision option. A coarser stride trades stitching quality for
 # speed: 112 gives 2x overlap and ~12x fewer tiles per scene.
 STRIDE = 32
+CACHE_SCENE = False
+BATCH_ACCUMULATION = False
 
 SEEDS = ["s19", "s42", "s58"]
 
@@ -415,7 +430,8 @@ def build_config(site_key: str, arch: str, seed: str) -> tuple[str, dict]:
     # glob: `*_s19_*` would then match both strides and silently pool them.
     # require_no_prefix_collisions() rejects that shape, by design.
     stride_tag = "" if STRIDE == 32 else f"_stride{STRIDE}"
-    sweep_name = f"{site['name']}_{slug}{stride_tag}_{seed}"
+    optimization_tag = ("_cache" if CACHE_SCENE else "") + ("_batchstitch" if BATCH_ACCUMULATION else "")
+    sweep_name = f"{site['name']}_{slug}{stride_tag}{optimization_tag}_{seed}"
 
     overrides = {
         # Lineage. Mandatory key -- see build_s1_encoding in run_inference.py.
@@ -435,6 +451,10 @@ def build_config(site_key: str, arch: str, seed: str) -> tuple[str, dict]:
         "inference.output.probability_precision": "float16",
     }
     overrides.update(site["post"])
+    if CACHE_SCENE:
+        overrides["inference.data.cache_scene"] = True
+    if BATCH_ACCUMULATION:
+        overrides["inference.stitching.batch_accumulation"] = True
 
     doc = {
         "sweep": {
@@ -497,6 +517,8 @@ def assert_base_config_is_v3() -> None:
 def main() -> None:
     ap = argparse.ArgumentParser(description=__doc__)
     ap.add_argument("--check", action="store_true", help="report what would change; write nothing")
+    ap.add_argument("--cache-scene", action="store_true", help="opt in to preprocessing each scene once in RAM")
+    ap.add_argument("--batch-accumulation", action="store_true", help="opt in to ordered Triton weighted blending")
     ap.add_argument("--host", choices=sorted(HOSTS), default="gcp",
                     help="filesystem layout to emit paths for (default: gcp)")
     ap.add_argument("--stride", type=int, default=32,
@@ -511,7 +533,9 @@ def main() -> None:
                          "or 'new5' for the five never-evaluated architectures")
     args = ap.parse_args()
 
-    global DATA_ROOT, CKPT_ROOT, CKPT_PREFIX, HAMP24_DIR, STRIDE
+    global DATA_ROOT, CKPT_ROOT, CKPT_PREFIX, HAMP24_DIR, STRIDE, CACHE_SCENE, BATCH_ACCUMULATION
+    CACHE_SCENE = args.cache_scene
+    BATCH_ACCUMULATION = args.batch_accumulation
     STRIDE = args.stride
     if STRIDE < 1 or STRIDE > 224:
         raise SystemExit(f"--stride {STRIDE} outside 1..224 (tile_size is 224)")

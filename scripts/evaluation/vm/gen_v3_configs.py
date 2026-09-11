@@ -224,6 +224,29 @@ SITES = {
             "inference.post_processing.filtering.min_length_meters": 10000.0,
         },
     },
+    # Rockefeller Natural Reserve, 157 scenes (~222 MB each), frame ron_63_ts_22_sn_14.
+    #
+    # ⚠️ Post-processing is the HAMPYEONG shape, not the SDS one: keep_top_k 5 with
+    # NO length filter. Read out of the pair-based config that actually ran this
+    # site (configs_including_sds/rockerfeller/inference_sweep_rockerfeller-s42.yaml),
+    # not inferred -- the transect-based analysis downstream makes SDS handling the
+    # intuitive guess, and the intuitive guess is wrong.
+    #
+    # That config also omits inference.data.num_workers / batch_size /
+    # probability_precision, which the v3 SITES all set. Those are performance and
+    # storage knobs rather than estimand-defining ones, so the v3 defaults are kept
+    # for consistency with the rest of this lineage.
+    "rockefeller": {
+        "subdir": "rockefeller",
+        "input_dir": "{data_root}/Inference_input/ROCKERFELLER_ron_63_ts_22_sn_14",
+        "input_glob": "*.tif",
+        "name": "v3_rockefeller",
+        "post": {
+            "inference.post_processing.filtering.apply_length_filter": False,
+            "inference.post_processing.filtering.min_length_meters": 10000.0,
+            "inference.post_processing.filtering.keep_top_k": 5,
+        },
+    },
     # --- SDS sites (satellite-derived shoreline) ---
     #
     # No length filter and no keep_top_k: SDS extracts a waterline per scene and
